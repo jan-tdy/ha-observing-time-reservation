@@ -68,16 +68,22 @@ Copy `custom_components/observing_time_reservation` into your Home Assistant
    Reservation**.
 2. Give it a name (e.g. `Bombol 1`) and pick its backend (`ha-indi-client`,
    `ha-seestar`, or `manual`).
-3. Pick the matching HA device, so the entity picker in the next step can be
-   scoped to it (optional - you can still map entities freely afterwards).
+3. Pick every HA device that belongs to this telescope. A telescope is rarely
+   one HA device - INDI gives the mount, CCD/camera, focuser and filter wheel
+   each their own device - so this step takes a *list*, not a single device
+   (optional either way; you can still map entities freely afterwards, and
+   change the list later from **Configure**).
 4. Open the integration entry's **Configure** (options flow):
    - reservation rules: min/max duration, start-time granularity, image folder,
-     auto-save interval while recording, admin HA user IDs;
+     auto-save interval while recording, admin HA user IDs, and the same
+     device list from step 3 (editable here too);
    - capability mapping: for each abstract action (goto RA/Dec, park, tracking,
      start/stop capture, exposure, filter, focuser, CCD temperature, live/preview
      camera, status sensor) pick the existing entity it should drive. This uses
      HA's own entity selector, so it's the same dropdown you already know from
-     every other integration - there is nothing to type or get wrong.
+     every other integration - there is nothing to type or get wrong - and,
+     when step 3 named at least one device, the dropdown only lists entities
+     from those devices instead of every entity in the house.
 
 The service -> entity mapping is inferred automatically from the entity's
 domain (`button.press`, `number.set_value`, `select.select_option`,

@@ -5,7 +5,14 @@ DOMAIN = "observing_time_reservation"
 
 # --- config/options keys -----------------------------------------------
 CONF_BACKEND = "backend"
-CONF_SOURCE_DEVICE_ID = "source_device_id"
+# A telescope is rarely one HA device: INDI exposes the mount, CCD/camera,
+# focuser, filter wheel, etc. as separate devices (one each), and Seestar
+# exposes telephoto/wide cameras plus mount/health as one device but still
+# alongside unrelated devices in the same HA instance. So this is a *list*
+# of every HA device that belongs to this telescope, used only to narrow the
+# entity pickers in the capability-mapping step to this telescope's own
+# entities instead of every entity in the house.
+CONF_SOURCE_DEVICE_IDS = "source_device_ids"
 CONF_MIN_DURATION = "min_duration_minutes"
 CONF_MAX_DURATION = "max_duration_minutes"
 CONF_SLOT_STEP = "slot_step_minutes"
