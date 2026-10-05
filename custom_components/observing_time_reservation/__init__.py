@@ -64,10 +64,10 @@ def _coordinator_for(hass: HomeAssistant, config_entry_id: str) -> TelescopeCoor
     return coordinator
 
 
-def _user_name(hass: HomeAssistant, user_id: str | None) -> str:
+async def _user_name(hass: HomeAssistant, user_id: str | None) -> str:
     if user_id is None:
         return "system"
-    user = hass.auth.async_get_user(user_id)
+    user = await hass.auth.async_get_user(user_id)
     return user.name if user and user.name else (user_id if user else "unknown")
 
 
@@ -134,7 +134,7 @@ async def async_setup(hass: HomeAssistant, _config: dict) -> bool:
         try:
             await coordinator.async_reserve(
                 user_id=user_id,
-                user_name=_user_name(hass, user_id),
+                user_name=await _user_name(hass, user_id),
                 start=start,
                 end=end,
             )
