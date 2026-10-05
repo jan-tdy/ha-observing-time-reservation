@@ -48,6 +48,13 @@ class ObservingTimeReservationPanel extends HTMLElement {
     this._pending = false;
     this._error = null;
     this._lastSignature = undefined;
+    // Draft rows for the sequence builder (see _renderSequence). Each row
+    // only carries a stable `key` (never reused positionally) so removing
+    // a row in the middle doesn't shift other rows' element ids - field
+    // values are read straight off the DOM at submit time, same as every
+    // other form in this panel.
+    this._sequenceKeySeq = 1;
+    this._sequenceDraft = [{ key: 0 }];
   }
 
   set hass(hass) {
@@ -104,6 +111,34 @@ class ObservingTimeReservationPanel extends HTMLElement {
     if (!this._telescopes) return null;
     return this._telescopes.find((t) => t.entry_id === this._selectedEntryId) || null;
   }
+
+  // Target-name catalog (Messier + other named deep-sky objects) for the
+  // goto search box - fetched once, lazily, from the static file this
+  // integration serves (see CATALOG_URL_PATH in __init__.py). Non-critical:
+  // if it fails to load, the search box just has nothing to suggest, and
+  // the raw RA/Dec fields next to it still work as always.
+  _maybeLoadCatalog() {
+    if (this._catalogPromise) return;
+    this._catalogPromise = fetch(`/${DOMAIN}/catalog.json`)
+      .then((r) => r.json())
+      .then((data) => {
+        this._catalogIndex = new Map();
+        const addEntry = (label, ra, dec) => this._catalogIndex.set(label, { ra, dec });
+        (data.messier || []).forEach((o) => {
+          const extra = (o.common_names && o.common_names[0]) || o.type || "";
+          addEntry(`${o.messier}${extra ? " — " + extra : ""}`, o.ra, o.dec);
+        });
+        (data.named || []).forEach((o) => {
+          const name = (o.common_names && o.common_names[0]) || o.id;
+          addEntry(`${name} (${o.id})`, o.ra, o.dec);
+        });
+        this._render();
+      })
+      .catch(() => {
+        this._catalogIndex = null;
+      });
+  }
+
 
   // -- service helpers ------------------------------------------------
 
@@ -204,10 +239,18 @@ class ObservingTimeReservationPanel extends HTMLElement {
         "in_use_entity",
         "availability_entity",
         "usage_entity",
+        "sequence_entity",
         "live_camera_entity",
         "preview_camera_entity",
         "status_sensor_entity",
       ].forEach((key) => t[key] && ids.push(t[key]));
+      // Every mapped action AND reference capability - this is what makes
+      // the telemetry grid (current temperature, RA/Dec, stack state, ...)
+      // actually update live instead of only ever showing the value from
+      // the moment the panel first loaded.
+      if (t.capability_map) {
+        Object.values(t.capability_map).forEach((id) => id && ids.push(id));
+      }
     });
     const states = ids.map((id) => this._hass.states[id] && this._hass.states[id].last_updated);
     return JSON.stringify([states, this._selectedEntryId, this._pending, this._error, this._narrow]);
@@ -245,6 +288,12 @@ class ObservingTimeReservationPanel extends HTMLElement {
     const holder = this._currentHolder(telescope);
     const amIHolder = this._amIHolder(telescope);
 
+    // Telemetry (and now the sequence sensor) is watched for live updates,
+    // which means a re-render can fire mid-keystroke, e.g. while typing a
+    // goto RA/Dec or building a sequence step - without this, whatever the
+    // viewer just typed would be wiped the moment any sensor ticks.
+    const inputSnapshot = this._snapshotInputValues();
+
     this.shadowRoot.innerHTML = `
       <style>${this._styles()}</style>
       <div class="page">
@@ -254,6 +303,7 @@ class ObservingTimeReservationPanel extends HTMLElement {
         </div>
         ${this._error ? `<ha-alert alert-type="error">${this._escape(this._error)}</ha-alert>` : ""}
         ${this._renderStatus(holder, amIHolder)}
+        ${this._renderTelemetry(telescope)}
         <div class="columns">
           <div class="column">
             ${amIHolder ? this._renderControlPanel(telescope, holder) : this._renderBooking(telescope)}
@@ -267,6 +317,29 @@ class ObservingTimeReservationPanel extends HTMLElement {
       </div>
     `;
     this._attachListeners(telescope);
+    this._restoreInputValues(inputSnapshot);
+  }
+
+  // Full-innerHTML re-render is simple but destroys live DOM state, so any
+  // text a viewer is mid-typing has to be saved beforehand and reapplied
+  // after - otherwise a telemetry tick could wipe a half-typed RA/Dec or
+  // sequence step out from under them.
+  _snapshotInputValues() {
+    const root = this.shadowRoot;
+    if (!root) return {};
+    const snapshot = {};
+    root.querySelectorAll("ha-input, input.target-search").forEach((el) => {
+      if (el.id && el.value) snapshot[el.id] = el.value;
+    });
+    return snapshot;
+  }
+
+  _restoreInputValues(snapshot) {
+    const root = this.shadowRoot;
+    Object.entries(snapshot).forEach(([id, value]) => {
+      const el = root.getElementById(id);
+      if (el) el.value = value;
+    });
   }
 
   _renderTabs() {
@@ -294,6 +367,64 @@ class ObservingTimeReservationPanel extends HTMLElement {
     }
     return `<div class="status status-busy"><ha-icon icon="mdi:account-clock"></ha-icon>
       In use by ${this._escape(holder.client_name)} until ${fmtTime(holder.end)}</div>`;
+  }
+
+  // At-a-glance telemetry: what the telescope is actually doing right now
+  // (temperature, where it's really pointing, stacking progress, ...) as
+  // opposed to the write-only setpoints in the control panel below. Shown
+  // to every viewer, not just the current holder.
+  _renderTelemetry(telescope) {
+    const has = (ref) => this._hasCapability(telescope, ref);
+    const stateOf = (ref) => {
+      const id = this._capabilityEntity(telescope, ref);
+      return id ? this._hass.states[id] : null;
+    };
+    const display = (ref) => {
+      const st = stateOf(ref);
+      if (!st) return "";
+      const unit = (st.attributes && st.attributes.unit_of_measurement) || "";
+      return `${this._escape(st.state)}${unit ? ` ${this._escape(unit)}` : ""}`;
+    };
+
+    const items = [
+      ["mdi:thermometer", "Temperature", "temperature_sensor_entity"],
+      ["mdi:battery-medium", "Battery", "battery_sensor_entity"],
+      ["mdi:crosshairs-gps", "Current RA", "current_ra_sensor_entity"],
+      ["mdi:crosshairs-gps", "Current Dec", "current_dec_sensor_entity"],
+      ["mdi:angle-acute", "Altitude", "altitude_sensor_entity"],
+      ["mdi:compass-outline", "Azimuth", "azimuth_sensor_entity"],
+      ["mdi:sync", "Tracking", "tracking_state_sensor_entity"],
+      ["mdi:rotate-3d-variant", "Slewing", "slewing_state_sensor_entity"],
+      ["mdi:parking", "Parked", "at_park_sensor_entity"],
+      ["mdi:layers-triple", "Stack state", "stack_state_sensor_entity"],
+      ["mdi:image-multiple", "Stacked frames", "stacked_frames_sensor_entity"],
+      ["mdi:image-off", "Dropped frames", "dropped_frames_sensor_entity"],
+      ["mdi:counter", "Total frames", "total_frames_sensor_entity"],
+      ["mdi:timer-sand", "Integration time", "integration_time_sensor_entity"],
+      ["mdi:focus-field", "Focuser position", "focuser_position_sensor_entity"],
+      ["mdi:filter-variant", "Filter position", "filter_position_sensor_entity"],
+    ].filter(([, , ref]) => has(ref));
+
+    if (!items.length) return "";
+
+    return `
+      <div class="section telemetry">
+        <h2><ha-icon icon="mdi:gauge"></ha-icon> Telemetry</h2>
+        <div class="telemetry-grid">
+          ${items
+            .map(
+              ([icon, label, ref]) => `
+            <div class="telemetry-item">
+              <ha-icon icon="${icon}"></ha-icon>
+              <span class="t-label">${label}</span>
+              <span class="t-value">${display(ref) || "–"}</span>
+            </div>
+          `
+            )
+            .join("")}
+        </div>
+      </div>
+    `;
   }
 
   _renderBooking(telescope) {
@@ -325,6 +456,8 @@ class ObservingTimeReservationPanel extends HTMLElement {
   }
 
   _renderControlPanel(telescope, holder) {
+    this._maybeLoadCatalog();
+
     const has = (cap) => this._hasCapability(telescope, cap);
     const exposureUnit = this._unitFor(telescope, "set_exposure");
 
@@ -367,6 +500,13 @@ class ObservingTimeReservationPanel extends HTMLElement {
       <div class="section">
         <h2><ha-icon icon="mdi:crosshairs-gps"></ha-icon> Goto</h2>
         <div class="row">
+          <input id="target-search" class="target-search" list="target-catalog"
+                 placeholder="Search target by name (e.g. M31, Andromeda)" autocomplete="off" />
+          <datalist id="target-catalog">
+            ${this._catalogIndex ? Array.from(this._catalogIndex.keys()).map((label) => `<option value="${this._escape(label)}"></option>`).join("") : ""}
+          </datalist>
+        </div>
+        <div class="row">
           <ha-input id="ra-input" label="RA"></ha-input>
           <ha-input id="dec-input" label="Dec"></ha-input>
         </div>
@@ -396,6 +536,101 @@ class ObservingTimeReservationPanel extends HTMLElement {
             }></ha-switch>
           </div>
           <ha-button id="save-frame-btn">Save frame now</ha-button>
+        </div>
+      </div>
+
+      ${this._renderSequence(telescope)}
+    `;
+  }
+
+  // Multi-exposure sequences: an ordered plan of capture steps
+  // (filter/exposure/count, optional autofocus every N subs), modeled on
+  // CCDciel's own plan/step engine - run server-side by the coordinator so
+  // it keeps going exactly as described even if this tab is closed.
+  _renderSequence(telescope) {
+    const has = (cap) => this._hasCapability(telescope, cap);
+    if (!has("set_exposure")) return "";
+    const exposureUnit = this._unitFor(telescope, "set_exposure");
+
+    const seqState = telescope.sequence_entity ? this._hass.states[telescope.sequence_entity] : null;
+    const state = seqState ? seqState.state : "idle";
+
+    if (state === "running" || state === "paused") {
+      const steps = (seqState.attributes && seqState.attributes.steps) || [];
+      const currentStep = (seqState.attributes && seqState.attributes.current_step) || 0;
+      const totalSubs = steps.reduce((sum, s) => sum + (s.count || 0), 0);
+      const doneSubs = steps.reduce((sum, s) => sum + (s.done_count || 0), 0);
+      return `
+        <div class="section sequence">
+          <h2><ha-icon icon="mdi:camera-burst"></ha-icon> Sequence</h2>
+          <p>${state === "running" ? "Running" : "Paused"} &ndash; step ${currentStep + 1} of
+            ${steps.length}, ${doneSubs}/${totalSubs} subs</p>
+          <ul class="log sequence-steps">
+            ${steps
+              .map(
+                (s, i) => `
+              <li class="${i === currentStep ? "current" : ""}">
+                ${this._escape(s.filter || "–")} &middot; ${this._escape(String(s.exposure))}${exposureUnit}
+                &times; ${s.done_count}/${s.count}
+              </li>
+            `
+              )
+              .join("")}
+          </ul>
+          <div class="row buttons">
+            ${
+              state === "running"
+                ? `<ha-button id="sequence-pause-btn">Pause</ha-button>`
+                : `<ha-button id="sequence-resume-btn" appearance="accent">Resume</ha-button>`
+            }
+            <ha-button id="sequence-cancel-btn">Cancel</ha-button>
+          </div>
+        </div>
+      `;
+    }
+
+    const statusHint =
+      state === "done"
+        ? `<p class="hint">Last sequence finished.</p>`
+        : state === "cancelled"
+          ? `<p class="hint">Last sequence was cancelled.</p>`
+          : "";
+
+    // Each row's inputs are keyed by a stable per-row key (never reused
+    // positionally), not by array index - removing a row in the middle
+    // must not shift any other row's element ids, or the generic
+    // snapshot/restore in _render() (see _snapshotInputValues) would
+    // reapply values by id onto what is now a *different* row.
+    const rows = this._sequenceDraft
+      .map(
+        (step) => `
+      <div class="row sequence-step">
+        <ha-input id="seq-filter-${step.key}" label="Filter"></ha-input>
+        <ha-input id="seq-exposure-${step.key}" label="Exposure${exposureUnit ? ` (${exposureUnit})` : ""}" type="number"></ha-input>
+        <ha-input id="seq-count-${step.key}" label="Count" type="number"></ha-input>
+        ${
+          has("auto_focus")
+            ? `<ha-input id="seq-autofocus-${step.key}" label="Autofocus every"></ha-input>`
+            : ""
+        }
+        ${
+          this._sequenceDraft.length > 1
+            ? `<ha-button data-remove-step="${step.key}" title="Remove step">&times;</ha-button>`
+            : ""
+        }
+      </div>
+    `
+      )
+      .join("");
+
+    return `
+      <div class="section sequence">
+        <h2><ha-icon icon="mdi:camera-burst"></ha-icon> Sequence</h2>
+        ${statusHint}
+        ${rows}
+        <div class="row buttons">
+          <ha-button id="sequence-add-step-btn">Add step</ha-button>
+          <ha-button id="sequence-start-btn" appearance="accent">Start sequence</ha-button>
         </div>
       </div>
     `;
@@ -522,6 +757,15 @@ class ObservingTimeReservationPanel extends HTMLElement {
     on("shutdown-btn", "click", () => this._sendCommand("shutdown"));
     on("dew-heater-switch", "change", (e) => this._sendCommand("set_dew_heater", e.target.checked));
 
+    on("target-search", "change", (e) => {
+      const entry = this._catalogIndex && this._catalogIndex.get(e.target.value);
+      if (!entry) return;
+      const raEl = root.getElementById("ra-input");
+      const decEl = root.getElementById("dec-input");
+      if (raEl) raEl.value = String(entry.ra);
+      if (decEl) decEl.value = String(entry.dec);
+    });
+
     on("goto-btn", "click", async () => {
       await this._sendCommand("set_goto_ra", val("ra-input"));
       await this._sendCommand("set_goto_dec", val("dec-input"));
@@ -552,6 +796,41 @@ class ObservingTimeReservationPanel extends HTMLElement {
     on("stop-capture-btn", "click", () => this._sendCommand("stop_capture"));
     on("recording-switch", "change", (e) => this._call("set_recording", { enabled: e.target.checked }));
     on("save-frame-btn", "click", () => this._call("save_frame", {}));
+
+    root.querySelectorAll("[data-remove-step]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const key = Number(btn.getAttribute("data-remove-step"));
+        this._sequenceDraft = this._sequenceDraft.filter((s) => s.key !== key);
+        this._render();
+      });
+    });
+    on("sequence-add-step-btn", "click", () => {
+      this._sequenceDraft.push({ key: this._sequenceKeySeq++ });
+      this._render();
+    });
+    on("sequence-start-btn", "click", () => {
+      const steps = this._sequenceDraft.map((draftStep) => {
+        const k = draftStep.key;
+        const step = {
+          exposure: Number(val(`seq-exposure-${k}`)),
+          count: Number(val(`seq-count-${k}`)),
+        };
+        const filter = val(`seq-filter-${k}`);
+        const autofocusEvery = val(`seq-autofocus-${k}`);
+        if (filter) step.filter = filter;
+        if (autofocusEvery) step.autofocus_every = Number(autofocusEvery);
+        return step;
+      });
+      if (steps.some((s) => !s.exposure || !s.count)) {
+        this._error = "every sequence step needs an exposure and a count";
+        this._render();
+        return;
+      }
+      this._call("start_sequence", { steps });
+    });
+    on("sequence-pause-btn", "click", () => this._call("pause_sequence", {}));
+    on("sequence-resume-btn", "click", () => this._call("resume_sequence", {}));
+    on("sequence-cancel-btn", "click", () => this._call("cancel_sequence", {}));
 
     on("set-availability-btn", "click", () => {
       const start = val("admin-start-input");
@@ -607,6 +886,21 @@ class ObservingTimeReservationPanel extends HTMLElement {
       table.usage th, table.usage td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--divider-color); }
       .admin { margin-top: 24px; background: var(--card-background-color, #fff); border-radius: var(--ha-card-border-radius, 12px);
         box-shadow: var(--ha-card-box-shadow, 0 1px 3px rgba(0,0,0,0.12)); padding: 16px; }
+      .telemetry-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; }
+      .telemetry-item { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border-radius: 8px;
+        background: var(--secondary-background-color, rgba(0,0,0,0.03)); }
+      .telemetry-item ha-icon { color: var(--primary-color); width: 18px; height: 18px; }
+      .t-label { font-size: 0.75em; color: var(--secondary-text-color); }
+      .t-value { font-size: 1.05em; font-weight: 500; color: var(--primary-text-color); }
+      input.target-search { flex: 1 1 220px; padding: 10px 12px; border: 1px solid var(--divider-color);
+        border-radius: 8px; font-size: 14px; font-family: inherit; background: var(--card-background-color, #fff);
+        color: var(--primary-text-color); box-sizing: border-box; }
+      .sequence-step { align-items: center; }
+      .sequence-step ha-input { flex: 1 1 110px; }
+      .sequence-step ha-button { flex: 0 0 auto; padding: 0 12px; }
+      ul.sequence-steps { list-style: none; margin: 8px 0; padding: 0; font-family: var(--code-font-family, monospace); font-size: 0.9em; }
+      ul.sequence-steps li { padding: 4px 8px; border-radius: 6px; color: var(--secondary-text-color); }
+      ul.sequence-steps li.current { background: var(--primary-color); color: #fff; font-weight: 500; }
     `;
   }
 }

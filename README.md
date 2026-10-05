@@ -7,10 +7,12 @@
 A [Home Assistant](https://www.home-assistant.io/) **custom integration + a full
 sidebar panel** that lets clients reserve observing time on a telescope, and then -
 for the exact duration of their slot, nothing before or after - unlocks a
-full-page telescope control view: goto, park/tracking, exposure/filter/focuser,
-live preview and frame saving. It's a sidebar item (like Map or Energy), not a
-small dashboard tile - the goal is something that actually replaces CCDciel for
-the observing session itself, not a status widget.
+full-page telescope control view: goto (with target-name search), park/tracking,
+exposure/filter/focuser, live telemetry (temperature, actual pointing, stacking
+progress, frame counts), multi-exposure sequences, live preview and frame saving.
+It's a sidebar item (like Map or Energy), not a small dashboard tile - the goal
+is something that actually replaces CCDciel for the observing session itself,
+not a status widget.
 
 Built for the **Bombol.Space** telescope hosting facility, part of the
 **DevControl2** project. It is backend-agnostic: it talks to whatever entities
@@ -88,14 +90,19 @@ Copy `custom_components/observing_time_reservation` into your Home Assistant
    - capability mapping: for each abstract action (goto RA/Dec, park, tracking,
      start/stop capture, exposure, filter, focuser, CCD temperature, the
      controls-enabled gate, allow-power-actions, startup sequence, shutdown,
-     dew heater, live/preview camera, status sensor) pick the existing entity
-     it should drive. This uses HA's own entity selector, so it's the same
-     dropdown you already know from every other integration - there is
-     nothing to type or get wrong - and, when step 3 named at least one
-     device, the dropdown only lists entities from those devices instead of
-     every entity in the house. Leave a capability blank if your backend has
-     no matching entity (e.g. `ha-seestar` has no "Unpark"); the UI simply
-     hides that control instead of showing a dead button.
+     dew heater, live/preview camera, status sensor, plus a long tail of
+     Seestar-specific actions like imaging mode/mosaic/gain/auto-focus) and
+     for each read-only telemetry value (temperature, current RA/Dec,
+     altitude/azimuth, tracking/slewing/park state, stack state, frame
+     counts, battery, integration time, focuser/filter position) pick the
+     existing entity it should read from or drive. This uses HA's own entity
+     selector, so it's the same dropdown you already know from every other
+     integration - there is nothing to type or get wrong - and, when step 3
+     named at least one device, the dropdown only lists entities from those
+     devices instead of every entity in the house. Leave a capability blank
+     if your backend has no matching entity (e.g. `ha-seestar` has no
+     "Unpark"); the UI simply hides that control, or that telemetry tile,
+     instead of showing something dead or blank.
 
 The service -> entity mapping is inferred automatically from the entity's
 domain (`button.press`, `number.set_value`, `select.select_option`,
@@ -135,6 +142,25 @@ entities itself over a small websocket API the integration registers
   *re-checks server-side* against the active reservation before touching any
   entity - so this isn't just a UI lock, a client cannot drive the scope
   outside their booked slot even by calling the service directly.
+- **Telemetry, always visible, not just controls.** A grid at the top of the
+  page shows whatever's actually mapped - current CCD temperature, where the
+  mount is really pointing (RA/Dec, alt/az), tracking/slewing/park state,
+  stacking stage and frame counts, focuser/filter position, battery,
+  integration time. It's shown to every viewer, not just the current holder,
+  and updates live.
+- **Target-name search next to the raw RA/Dec fields.** A searchable catalog
+  of Messier and other named deep-sky objects (built from
+  [OpenNGC](https://github.com/mattiaverga/OpenNGC)) fills in RA/Dec when you
+  pick a target by name - the raw coordinate fields stay right there and stay
+  directly editable, this is a shortcut, not a replacement.
+- **Exposure sequences**, modeled on
+  [CCDciel](https://www.ap-i.net/ccdciel/en/start)'s own plan/step engine: an
+  ordered list of capture steps (filter, exposure length, how many subs,
+  optionally an auto-focus run every N subs), run server-side by the
+  coordinator - it keeps going exactly as described even if the browser tab
+  is closed, and survives a HA restart (landing safely paused, never
+  resuming capture commands on its own). See "Known limitations" below for
+  what it deliberately leaves out.
 
 ### What an admin additionally sees
 
@@ -174,6 +200,10 @@ control view / admin view), just scaled down to card size.
 | `observing_time_reservation.send_command` | Dispatch an abstract capability (`goto`, `park`, `set_exposure`, ...) - only works while you hold the active reservation. |
 | `observing_time_reservation.set_recording` | Arm/disarm periodic frame saving for your session. |
 | `observing_time_reservation.save_frame` | Save one frame immediately. |
+| `observing_time_reservation.start_sequence` | Run an ordered list of capture steps (filter/exposure/count/autofocus_every). |
+| `observing_time_reservation.pause_sequence` | Pause the running sequence after the in-progress exposure finishes. |
+| `observing_time_reservation.resume_sequence` | Resume a paused sequence. |
+| `observing_time_reservation.cancel_sequence` | Stop the running or paused sequence. |
 
 See [`services.yaml`](custom_components/observing_time_reservation/services.yaml)
 for full field definitions - they also show up in **Developer tools -> Actions**
@@ -211,6 +241,19 @@ with proper selectors.
 - **No conflict/weather awareness beyond overlap checking.** Availability
   windows and reservations are purely time-based; cloud-cover/weather-based
   auto-cancellation is not implemented.
+- **Sequences are narrower than CCDciel's own plan engine, on purpose.**
+  Built from reading
+  [CCDciel's actual source](https://github.com/pchev/ccdciel) (`cu_plan.pas`,
+  `u_global.pas`'s `TStep`), but scoped to only what this integration's
+  generic capability map already supports: filter, exposure, CCD
+  temperature, and autofocus-every-N-subs. No dithering/autoguiding (no
+  guider capability exists here), no frame type (light/dark/flat/bias)
+  switching, no binning, and none of CCDciel's script/switch step types.
+  Progress between subs advances by elapsed time (exposure length plus a
+  fixed readout margin), not by polling a "capture finished" signal -
+  neither `ha-indi-client` nor `ha-seestar` exposes one generically enough
+  to rely on. A step already fully done is skipped on resume, same as
+  CCDciel's own behavior.
 - **HA accounts for clients are created manually by the admin** (Settings ->
   People); there is no self-service signup flow.
 

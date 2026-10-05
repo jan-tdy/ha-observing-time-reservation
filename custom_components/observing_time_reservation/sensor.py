@@ -16,7 +16,9 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     coordinator: TelescopeCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities([AvailabilitySensor(coordinator), UsageSensor(coordinator)])
+    async_add_entities(
+        [AvailabilitySensor(coordinator), UsageSensor(coordinator), SequenceSensor(coordinator)]
+    )
 
 
 class AvailabilitySensor(ObservingTimeReservationEntity, SensorEntity):
@@ -60,3 +62,27 @@ class UsageSensor(ObservingTimeReservationEntity, SensorEntity):
     @property
     def extra_state_attributes(self) -> dict:
         return {"per_client": self.coordinator.usage()}
+
+
+class SequenceSensor(ObservingTimeReservationEntity, SensorEntity):
+    """Live progress of the current/last multi-exposure sequence, if any
+    (see sequence.py) - idle/running/paused/done/cancelled, with per-step
+    filter/exposure/count/done_count so the panel can render real progress."""
+
+    _attr_translation_key = "sequence"
+    _attr_name = "Sequence"
+    _attr_entity_category = "diagnostic"
+
+    def __init__(self, coordinator: TelescopeCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.entry.entry_id}_sequence"
+
+    @property
+    def native_value(self) -> str:
+        snapshot = self.coordinator.sequence_snapshot()
+        return snapshot["state"] if snapshot else "idle"
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        snapshot = self.coordinator.sequence_snapshot()
+        return {"steps": snapshot["steps"], "current_step": snapshot["current_step"]} if snapshot else {}

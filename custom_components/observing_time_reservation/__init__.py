@@ -18,15 +18,20 @@ from .const import (
     ATTR_END,
     ATTR_RESERVATION_ID,
     ATTR_START,
+    ATTR_STEPS,
     ATTR_VALUE,
     ATTR_WINDOWS,
     DOMAIN,
     SERVICE_CANCEL,
+    SERVICE_CANCEL_SEQUENCE,
+    SERVICE_PAUSE_SEQUENCE,
     SERVICE_RESERVE,
+    SERVICE_RESUME_SEQUENCE,
     SERVICE_SAVE_FRAME,
     SERVICE_SEND_COMMAND,
     SERVICE_SET_AVAILABILITY,
     SERVICE_SET_RECORDING,
+    SERVICE_START_SEQUENCE,
 )
 from .coordinator import TelescopeCoordinator
 from .reservation import ReservationError
@@ -42,11 +47,13 @@ CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 CARD_FILENAME = "observing-time-reservation-card.js"
 PANEL_FILENAME = "observing-time-reservation-panel.js"
+CATALOG_FILENAME = "catalog.json"
 PANEL_WEBCOMPONENT_NAME = "observing-time-reservation-panel"
 PANEL_URL_PATH = "observing-time-reservation"
 
 CARD_URL_PATH = f"/{DOMAIN}/{CARD_FILENAME}"
 PANEL_JS_URL_PATH = f"/{DOMAIN}/{PANEL_FILENAME}"
+CATALOG_URL_PATH = f"/{DOMAIN}/{CATALOG_FILENAME}"
 FRONTEND_DIR = Path(__file__).parent / "frontend"
 
 
@@ -72,7 +79,12 @@ async def async_setup(hass: HomeAssistant, _config: dict) -> bool:
     if FRONTEND_DIR.exists():
         card_path = str(FRONTEND_DIR / CARD_FILENAME)
         panel_path = str(FRONTEND_DIR / PANEL_FILENAME)
-        static_configs = [(CARD_URL_PATH, card_path), (PANEL_JS_URL_PATH, panel_path)]
+        catalog_path = str(FRONTEND_DIR / CATALOG_FILENAME)
+        static_configs = [
+            (CARD_URL_PATH, card_path),
+            (PANEL_JS_URL_PATH, panel_path),
+            (CATALOG_URL_PATH, catalog_path),
+        ]
         if hasattr(hass.http, "async_register_static_paths"):
             # HA >= 2024.7
             from homeassistant.components.http import StaticPathConfig
@@ -159,6 +171,24 @@ async def async_setup(hass: HomeAssistant, _config: dict) -> bool:
         coordinator = _coordinator_for(hass, call.data[ATTR_CONFIG_ENTRY_ID])
         await coordinator.async_save_frame(user_id=call.context.user_id)
 
+    async def _handle_start_sequence(call: ServiceCall) -> None:
+        coordinator = _coordinator_for(hass, call.data[ATTR_CONFIG_ENTRY_ID])
+        await coordinator.async_start_sequence(
+            user_id=call.context.user_id, steps=call.data[ATTR_STEPS]
+        )
+
+    async def _handle_pause_sequence(call: ServiceCall) -> None:
+        coordinator = _coordinator_for(hass, call.data[ATTR_CONFIG_ENTRY_ID])
+        await coordinator.async_pause_sequence(user_id=call.context.user_id)
+
+    async def _handle_resume_sequence(call: ServiceCall) -> None:
+        coordinator = _coordinator_for(hass, call.data[ATTR_CONFIG_ENTRY_ID])
+        await coordinator.async_resume_sequence(user_id=call.context.user_id)
+
+    async def _handle_cancel_sequence(call: ServiceCall) -> None:
+        coordinator = _coordinator_for(hass, call.data[ATTR_CONFIG_ENTRY_ID])
+        await coordinator.async_cancel_sequence(user_id=call.context.user_id)
+
     hass.services.async_register(
         DOMAIN,
         SERVICE_RESERVE,
@@ -211,6 +241,30 @@ async def async_setup(hass: HomeAssistant, _config: dict) -> bool:
         DOMAIN,
         SERVICE_SAVE_FRAME,
         _handle_save_frame,
+        schema=vol.Schema({vol.Required(ATTR_CONFIG_ENTRY_ID): str}),
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_START_SEQUENCE,
+        _handle_start_sequence,
+        schema=vol.Schema({vol.Required(ATTR_CONFIG_ENTRY_ID): str, vol.Required(ATTR_STEPS): list}),
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_PAUSE_SEQUENCE,
+        _handle_pause_sequence,
+        schema=vol.Schema({vol.Required(ATTR_CONFIG_ENTRY_ID): str}),
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_RESUME_SEQUENCE,
+        _handle_resume_sequence,
+        schema=vol.Schema({vol.Required(ATTR_CONFIG_ENTRY_ID): str}),
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_CANCEL_SEQUENCE,
+        _handle_cancel_sequence,
         schema=vol.Schema({vol.Required(ATTR_CONFIG_ENTRY_ID): str}),
     )
     return True

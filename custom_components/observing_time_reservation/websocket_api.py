@@ -31,6 +31,7 @@ def _telescope_info(registry: er.EntityRegistry, coordinator: TelescopeCoordinat
         "in_use_entity": _entity_id("binary_sensor", "in_use"),
         "availability_entity": _entity_id("sensor", "availability"),
         "usage_entity": _entity_id("sensor", "usage"),
+        "sequence_entity": _entity_id("sensor", "sequence"),
         "calendar_entity": _entity_id("calendar", "reservations"),
         "live_camera_entity": coordinator.reference_entity(REF_LIVE_CAMERA),
         "preview_camera_entity": coordinator.reference_entity(REF_PREVIEW_CAMERA),
