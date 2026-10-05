@@ -1,0 +1,116 @@
+reserve:
+  name: Reserve observing time
+  description: Book a slot for the current user on a telescope, inside an admin-opened availability window.
+  fields:
+    config_entry_id:
+      name: Telescope
+      description: The telescope's config entry id.
+      required: true
+      selector:
+        config_entry:
+          integration: observing_time_reservation
+    start:
+      name: Start
+      required: true
+      selector:
+        datetime:
+    end:
+      name: End
+      required: true
+      selector:
+        datetime:
+
+cancel_reservation:
+  name: Cancel reservation
+  description: Cancel one of your own reservations (or any, if called by an admin).
+  fields:
+    config_entry_id:
+      name: Telescope
+      required: true
+      selector:
+        config_entry:
+          integration: observing_time_reservation
+    reservation_id:
+      name: Reservation ID
+      required: true
+      selector:
+        text:
+
+set_availability:
+  name: Set availability window
+  description: Admin-only. Replace the list of time windows during which this telescope can be booked.
+  fields:
+    config_entry_id:
+      name: Telescope
+      required: true
+      selector:
+        config_entry:
+          integration: observing_time_reservation
+    windows:
+      name: Windows
+      description: List of {start, end} ISO datetime objects.
+      required: true
+      selector:
+        object:
+
+send_command:
+  name: Send telescope command
+  description: Dispatch an abstract capability (goto, park, start_capture, ...) to the entity mapped for it. Only works while you hold the active reservation.
+  fields:
+    config_entry_id:
+      name: Telescope
+      required: true
+      selector:
+        config_entry:
+          integration: observing_time_reservation
+    capability:
+      name: Capability
+      required: true
+      selector:
+        select:
+          options:
+            - set_goto_ra
+            - set_goto_dec
+            - goto
+            - stop_goto
+            - park
+            - unpark
+            - set_tracking
+            - start_capture
+            - stop_capture
+            - set_exposure
+            - set_filter
+            - set_focus
+            - set_ccd_temperature
+    value:
+      name: Value
+      required: false
+      selector:
+        object:
+
+set_recording:
+  name: Set frame recording
+  description: Arm/disarm periodic frame saving for your current session.
+  fields:
+    config_entry_id:
+      name: Telescope
+      required: true
+      selector:
+        config_entry:
+          integration: observing_time_reservation
+    enabled:
+      name: Enabled
+      required: true
+      selector:
+        boolean:
+
+save_frame:
+  name: Save a frame now
+  description: Immediately save one frame from the telescope's preview camera into this session's folder.
+  fields:
+    config_entry_id:
+      name: Telescope
+      required: true
+      selector:
+        config_entry:
+          integration: observing_time_reservation
