@@ -149,6 +149,13 @@ with proper selectors.
 - **Frame storage is local disk only.** `image_base_path` currently has to be a
   path the HA process can write to directly; moving it to a mounted USB drive
   once storage grows is just a matter of changing that option (no code change).
+  The directory must also be listed in HA's `allowlist_external_dirs`
+  (`camera.snapshot` refuses to write outside it), e.g.:
+  ```yaml
+  homeassistant:
+    allowlist_external_dirs:
+      - /config/observing_sessions
+  ```
 - **No conflict/weather awareness beyond overlap checking.** Availability
   windows and reservations are purely time-based; cloud-cover/weather-based
   auto-cancellation is not implemented.

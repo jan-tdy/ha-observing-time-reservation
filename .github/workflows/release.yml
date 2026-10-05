@@ -20,9 +20,12 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
+          # This job pushes a tag below, so (unlike the read-only
+          # validate/test workflows) it needs the checkout's persisted
+          # credentials.
 
       - name: Read version from manifest.json
         id: manifest
@@ -45,8 +48,8 @@ jobs:
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
-      - name: Check whether this version was already released
-        id: exists
+      - name: Check whether the tag exists
+        id: tag_exists
         run: |
           if git ls-remote --exit-code --tags origin "refs/tags/${{ steps.tag.outputs.tag }}" >/dev/null 2>&1; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
@@ -54,8 +57,19 @@ jobs:
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Check whether a GitHub Release already exists
+        id: release_exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "${{ steps.tag.outputs.tag }}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Create and push tag
-        if: github.ref_type != 'tag' && steps.exists.outputs.exists == 'false'
+        if: github.ref_type != 'tag' && steps.tag_exists.outputs.exists == 'false'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -63,7 +77,7 @@ jobs:
           git push origin "${{ steps.tag.outputs.tag }}"
 
       - name: Create GitHub Release
-        if: steps.exists.outputs.exists == 'false'
+        if: steps.release_exists.outputs.exists == 'false'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.tag }}

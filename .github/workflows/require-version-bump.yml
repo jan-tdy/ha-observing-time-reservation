@@ -9,28 +9,48 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+
 jobs:
   version-bump:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Fetch base branch
         run: git fetch origin "${{ github.base_ref }}"
 
       - name: Require a manifest.json version bump
         run: |
-          if git show "origin/${{ github.base_ref }}:custom_components/observing_time_reservation/manifest.json" > /tmp/base_manifest.json 2>/dev/null; then
-            base_version=$(python3 -c "import json; print(json.load(open('/tmp/base_manifest.json'))['version'])")
-          else
-            base_version="(integration not present on base branch)"
-          fi
-          head_version=$(python3 -c "import json; print(json.load(open('custom_components/observing_time_reservation/manifest.json'))['version'])")
-          echo "base version: $base_version"
-          echo "head version: $head_version"
-          if [ "$base_version" = "$head_version" ]; then
-            echo "::error file=custom_components/observing_time_reservation/manifest.json::version was not bumped (still $head_version). Every PR must bump it so the release workflow can cut a new release on merge."
-            exit 1
-          fi
+          git show "origin/${{ github.base_ref }}:custom_components/observing_time_reservation/manifest.json" \
+            > /tmp/base_manifest.json 2>/dev/null || true
+          python3 - <<'PY'
+          import json
+          import sys
+
+          try:
+              with open("/tmp/base_manifest.json") as f:
+                  base_version = json.load(f)["version"]
+          except (FileNotFoundError, json.JSONDecodeError, KeyError):
+              print("base version: (integration not present on base branch) - OK")
+              sys.exit(0)
+
+          with open("custom_components/observing_time_reservation/manifest.json") as f:
+              head_version = json.load(f)["version"]
+
+          base_tuple = tuple(int(p) for p in base_version.split("."))
+          head_tuple = tuple(int(p) for p in head_version.split("."))
+          print(f"base version: {base_version}")
+          print(f"head version: {head_version}")
+          if head_tuple <= base_tuple:
+              print(
+                  "::error file=custom_components/observing_time_reservation/manifest.json::"
+                  f"version was not increased ({base_version} -> {head_version}). "
+                  "Every PR must bump it so the release workflow can cut a new release on merge."
+              )
+              sys.exit(1)
+          PY

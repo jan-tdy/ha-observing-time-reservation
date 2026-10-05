@@ -166,7 +166,7 @@ class ObservingTimeReservationCard extends HTMLElement {
 
     this.shadowRoot.innerHTML = `
       <style>${this._styles()}</style>
-      <ha-card header="${title}">
+      <ha-card header="${this._escape(title)}">
         <div class="card-content">
           ${this._error ? `<ha-alert alert-type="error">${this._escape(this._error)}</ha-alert>` : ""}
           ${this._renderStatus(holder, amIHolder)}

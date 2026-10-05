@@ -8,6 +8,7 @@ flow, and runs the periodic frame-saving loop while a session is recording.
 """
 from __future__ import annotations
 
+import functools
 import logging
 import os
 from datetime import datetime, timedelta
@@ -274,7 +275,9 @@ class TelescopeCoordinator:
             _slug(reservation.client_name or reservation.client_user_id),
             reservation.start.strftime("%Y%m%dT%H%M%S"),
         )
-        await self.hass.async_add_executor_job(os.makedirs, session_dir, True)
+        await self.hass.async_add_executor_job(
+            functools.partial(os.makedirs, session_dir, exist_ok=True)
+        )
         filename = os.path.join(session_dir, f"frame_{dt_util.utcnow().strftime('%Y%m%dT%H%M%S')}.jpg")
         await self.hass.services.async_call(
             "camera",

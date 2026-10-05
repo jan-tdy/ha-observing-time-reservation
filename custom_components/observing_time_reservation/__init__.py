@@ -9,6 +9,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
+from homeassistant.util import dt as dt_util
 
 from .const import (
     ATTR_CAPABILITY,
@@ -28,6 +29,7 @@ from .const import (
     SERVICE_SET_RECORDING,
 )
 from .coordinator import TelescopeCoordinator
+from .reservation import ReservationError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -78,12 +80,20 @@ async def async_setup(hass: HomeAssistant, _config: dict) -> bool:
     async def _handle_reserve(call: ServiceCall) -> None:
         coordinator = _coordinator_for(hass, call.data[ATTR_CONFIG_ENTRY_ID])
         user_id = call.context.user_id
-        await coordinator.async_reserve(
-            user_id=user_id,
-            user_name=_user_name(hass, user_id),
-            start=call.data[ATTR_START],
-            end=call.data[ATTR_END],
-        )
+        # cv.datetime leaves a naive datetime when the caller sends one with no
+        # offset (e.g. the Developer Tools datetime selector); as_utc treats
+        # that as local time and makes it comparable with our aware internals.
+        start = dt_util.as_utc(call.data[ATTR_START])
+        end = dt_util.as_utc(call.data[ATTR_END])
+        try:
+            await coordinator.async_reserve(
+                user_id=user_id,
+                user_name=_user_name(hass, user_id),
+                start=start,
+                end=end,
+            )
+        except ReservationError as err:
+            raise HomeAssistantError(str(err)) from err
 
     async def _handle_cancel(call: ServiceCall) -> None:
         coordinator = _coordinator_for(hass, call.data[ATTR_CONFIG_ENTRY_ID])

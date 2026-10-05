@@ -171,9 +171,15 @@ class ObservingTimeReservationOptionsFlow(config_entries.OptionsFlow):
         current_map = self._entry.options.get(CONF_CAPABILITY_MAP, {})
         fields = {}
         for capability in ALL_CAPABILITIES:
-            fields[vol.Optional(capability, default=current_map.get(capability, ""))] = (
-                selector.selector({"entity": {}})
+            # HA's entity selector rejects "" as a default, so only mapped
+            # capabilities get a suggested_value - the rest stay unset.
+            existing = current_map.get(capability)
+            key = (
+                vol.Optional(capability, description={"suggested_value": existing})
+                if existing
+                else vol.Optional(capability)
             )
+            fields[key] = selector.selector({"entity": {}})
         return self.async_show_form(
             step_id="capabilities",
             data_schema=vol.Schema(fields),

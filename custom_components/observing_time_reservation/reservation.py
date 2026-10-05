@@ -7,7 +7,7 @@ and reused by both the integration and its test suite.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 
@@ -45,7 +45,7 @@ class Reservation:
     start: datetime
     end: datetime
     id: str = field(default_factory=lambda: uuid4().hex)
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     recording: bool = False
     cancelled: bool = False
 
