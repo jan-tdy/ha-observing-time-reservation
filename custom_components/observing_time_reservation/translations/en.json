@@ -1,0 +1,38 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Add a telescope",
+        "data": {
+          "name": "Name",
+          "backend": "Backend"
+        }
+      },
+      "device": {
+        "title": "Link the physical telescope",
+        "data": {
+          "source_device_id": "HA device (from ha-indi-client or ha-seestar)"
+        }
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Reservation rules",
+        "data": {
+          "min_duration_minutes": "Minimum reservation length",
+          "max_duration_minutes": "Maximum reservation length",
+          "slot_step_minutes": "Start time granularity",
+          "image_base_path": "Captured frames base folder",
+          "capture_interval_seconds": "Auto-save interval while recording",
+          "admin_user_ids": "Admin HA user IDs"
+        }
+      },
+      "capabilities": {
+        "title": "Control entity mapping",
+        "description": "Pick the entity that already exists (from ha-indi-client or ha-seestar) for each capability. Leave blank to hide that control for clients."
+      }
+    }
+  }
+}
