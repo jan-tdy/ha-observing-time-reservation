@@ -21,3 +21,8 @@ jobs:
       - uses: hacs/action@main
         with:
           category: integration
+          # "brands" (home-assistant/brands submission) and "topics" (repo
+          # GitHub topics) are only required for inclusion in the default
+          # HACS store; this is installed as a HACS custom repository, so
+          # skip them rather than keep CI red over store-listing paperwork.
+          ignore: "brands,topics"
