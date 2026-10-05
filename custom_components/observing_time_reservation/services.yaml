@@ -82,11 +82,81 @@ send_command:
             - set_filter
             - set_focus
             - set_ccd_temperature
+            - allow_power_actions
+            - startup_sequence
+            - shutdown
+            - set_dew_heater
+            - set_imaging_mode
+            - start_live_view
+            - start_mosaic
+            - start_spectra
+            - set_goto_target_label
+            - set_gain
+            - auto_focus
+            - set_mag_declination
+            - set_wide_camera
+            - record_video
+            - plate_solve_loop
+            - run_plan
+            - pause_plan
+            - continue_plan
+            - skip_target
+            - reset_plan_item
     value:
       name: Value
       required: false
       selector:
         object:
+
+start_sequence:
+  name: Start exposure sequence
+  description: Run a multi-step exposure plan (filter/exposure/count per step) one step after another. Only works while you hold the active reservation.
+  fields:
+    config_entry_id:
+      name: Telescope
+      required: true
+      selector:
+        config_entry:
+          integration: observing_time_reservation
+    steps:
+      name: Steps
+      description: List of {filter, exposure, count, ccd_temperature, autofocus_every} objects, run in order. Only exposure/count are required (filter/ccd_temperature/autofocus_every are optional); autofocus_every triggers the auto_focus capability every Nth sub of that step, if mapped. exposure is in whatever unit the mapped set_exposure entity itself uses (seconds for a typical INDI camera, milliseconds for ha-seestar) - same as the single-shot exposure field.
+      required: true
+      selector:
+        object:
+
+pause_sequence:
+  name: Pause exposure sequence
+  description: Pause the currently running sequence after the in-progress exposure finishes.
+  fields:
+    config_entry_id:
+      name: Telescope
+      required: true
+      selector:
+        config_entry:
+          integration: observing_time_reservation
+
+resume_sequence:
+  name: Resume exposure sequence
+  description: Resume a paused sequence.
+  fields:
+    config_entry_id:
+      name: Telescope
+      required: true
+      selector:
+        config_entry:
+          integration: observing_time_reservation
+
+cancel_sequence:
+  name: Cancel exposure sequence
+  description: Stop the currently running or paused sequence.
+  fields:
+    config_entry_id:
+      name: Telescope
+      required: true
+      selector:
+        config_entry:
+          integration: observing_time_reservation
 
 set_recording:
   name: Set frame recording

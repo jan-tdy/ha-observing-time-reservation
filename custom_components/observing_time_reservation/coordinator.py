@@ -8,6 +8,7 @@ flow, and runs the periodic frame-saving loop while a session is recording.
 """
 from __future__ import annotations
 
+import asyncio
 import functools
 import logging
 import os
@@ -20,6 +21,12 @@ from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    CAP_AUTO_FOCUS,
+    CAP_CONTROLS_ENABLED,
+    CAP_SET_CCD_TEMPERATURE,
+    CAP_SET_EXPOSURE,
+    CAP_SET_FILTER,
+    CAP_START_CAPTURE,
     CONF_ADMIN_USER_IDS,
     CONF_CAPABILITY_MAP,
     CONF_CAPTURE_INTERVAL,
@@ -44,9 +51,23 @@ from .reservation import (
     usage_summary,
     validate_new_reservation,
 )
+from .sequence import STATE_CANCELLED, STATE_DONE, STATE_PAUSED, STATE_RUNNING, Sequence, SequenceError
 from .store import ReservationStore
 
 _LOGGER = logging.getLogger(__name__)
+
+# How long to wait after triggering a sub-exposure before considering it
+# done: the configured exposure length plus a fixed readout/download
+# margin. No backend here exposes a generic, reliable "capture finished"
+# signal to poll instead (CCDciel itself polls its own capture controller's
+# `Running` flag, which is backend-internal state this integration's
+# generic entity-mapping model has no equivalent of), so progress advances
+# by elapsed time rather than by an event.
+SEQUENCE_READOUT_BUFFER = timedelta(seconds=5)
+# Approximate settle time after triggering an autofocus run before resuming
+# capture - likewise a fixed guess, since there is no generic "autofocus
+# finished" signal to wait on either.
+SEQUENCE_AUTOFOCUS_SETTLE = timedelta(seconds=20)
 
 
 def _slug(name: str) -> str:
@@ -85,6 +106,10 @@ class TelescopeCoordinator:
         self._listeners: list[callback] = []
         self._unsub_timer = None
         self._last_capture: dict[str, datetime] = {}
+        self._armed_reservation_id: str | None = None
+        self._sequence: Sequence | None = None
+        self._sequence_reservation_id: str | None = None
+        self._sequence_task: asyncio.Task | None = None
 
     @property
     def name(self) -> str:
@@ -98,6 +123,20 @@ class TelescopeCoordinator:
 
     async def async_setup(self) -> None:
         await self.store.async_load()
+        if self.store.sequence_data:
+            try:
+                self._sequence = Sequence.from_dict(self.store.sequence_data["sequence"])
+                self._sequence_reservation_id = self.store.sequence_data.get("reservation_id")
+            except (KeyError, SequenceError) as err:
+                _LOGGER.warning("Discarding unreadable stored sequence for %s: %s", self.name, err)
+                self._sequence = None
+                self._sequence_reservation_id = None
+            else:
+                if self._sequence.state == STATE_RUNNING:
+                    # Never resume issuing capture commands on our own after
+                    # a restart - land in a safe, explicit-resume-required
+                    # state instead.
+                    self._sequence.state = STATE_PAUSED
         self._unsub_timer = async_track_time_interval(
             self.hass, self._async_tick, timedelta(seconds=15)
         )
@@ -106,6 +145,9 @@ class TelescopeCoordinator:
         if self._unsub_timer:
             self._unsub_timer()
             self._unsub_timer = None
+        if self._sequence_task is not None:
+            self._sequence_task.cancel()
+            self._sequence_task = None
 
     def async_add_listener(self, update_callback: callback) -> callback:
         self._listeners.append(update_callback)
@@ -231,6 +273,20 @@ class TelescopeCoordinator:
 
     # -- capability dispatch -----------------------------------------------
 
+    def _has_capability(self, capability: str) -> bool:
+        return bool(self.capability_map.get(capability))
+
+    async def _async_dispatch_capability(self, capability: str, value=None) -> None:
+        """Fire-and-forget version of async_send_command for internal
+        callers (the sequence engine) that already know a capability may
+        legitimately be unmapped - silently skips rather than raising."""
+        entity_id = self.capability_map.get(capability)
+        if not entity_id:
+            return
+        domain = entity_id.split(".", 1)[0]
+        service, data = _infer_service_call(domain, entity_id, value)
+        await self.hass.services.async_call(domain, service, data, blocking=True)
+
     async def async_send_command(
         self, *, user_id: str | None, capability: str, value=None
     ) -> None:
@@ -241,16 +297,150 @@ class TelescopeCoordinator:
         that entity's domain, so there is nothing for the admin to get wrong.
         """
         self._assert_holds_slot(user_id)
-        entity_id = self.capability_map.get(capability)
-        if not entity_id:
+        if not self._has_capability(capability):
             raise HomeAssistantError(f"capability '{capability}' is not configured for this telescope")
-
-        domain = entity_id.split(".", 1)[0]
-        service, data = _infer_service_call(domain, entity_id, value)
-        await self.hass.services.async_call(domain, service, data, blocking=True)
+        await self._async_dispatch_capability(capability, value)
 
     def reference_entity(self, key: str) -> str | None:
         return self.capability_map.get(key)
+
+    # -- exposure sequences ---------------------------------------------------
+    #
+    # An ordered plan of capture steps (filter/exposure/count/CCD temp,
+    # optional autofocus every N subs), modeled on CCDciel's own plan/step
+    # engine (cu_plan.pas) but narrowed to what the generic capability map
+    # above already supports - no dithering/guiding, frame type or scripts.
+    # Progress advances by elapsed time (exposure + a fixed readout
+    # margin), since no backend here exposes a generic "capture finished"
+    # signal to poll instead.
+
+    def sequence_snapshot(self) -> dict | None:
+        if self._sequence is None:
+            return None
+        return self._sequence.to_dict()
+
+    def _exposure_wait_seconds(self, step_exposure: float) -> float:
+        """A sequence step's exposure is in whatever unit the mapped
+        set_exposure entity itself uses - seconds for a typical INDI
+        CCD_EXPOSURE, milliseconds for ha-seestar's stacking exposure (see
+        the "exposure units differ by backend" note in the README). Timing
+        the wait needs real seconds regardless of what unit was actually
+        sent to the camera."""
+        entity_id = self.capability_map.get(CAP_SET_EXPOSURE)
+        state = self.hass.states.get(entity_id) if entity_id else None
+        unit = ((state.attributes.get("unit_of_measurement") if state else None) or "").strip().lower()
+        if unit in ("ms", "millisecond", "milliseconds"):
+            return step_exposure / 1000
+        return step_exposure
+
+    async def _async_save_sequence(self) -> None:
+        if self._sequence is None:
+            self.store.sequence_data = None
+        else:
+            self.store.sequence_data = {
+                "reservation_id": self._sequence_reservation_id,
+                "sequence": self._sequence.to_dict(),
+            }
+        await self.store.async_save()
+
+    async def async_start_sequence(self, *, user_id: str | None, steps: list[dict]) -> None:
+        holder = self._assert_holds_slot(user_id)
+        if self._sequence_task is not None and not self._sequence_task.done():
+            raise HomeAssistantError("a sequence is already running on this telescope")
+        if not self._has_capability(CAP_SET_EXPOSURE):
+            raise HomeAssistantError("set_exposure capability is not configured for this telescope")
+        try:
+            sequence = Sequence.from_steps(steps)
+        except SequenceError as err:
+            raise HomeAssistantError(str(err)) from err
+
+        sequence.state = STATE_RUNNING
+        self._sequence = sequence
+        self._sequence_reservation_id = holder.id
+        await self._async_save_sequence()
+        self._notify()
+        self._sequence_task = self.hass.async_create_task(self._async_run_sequence(holder.id))
+
+    async def async_pause_sequence(self, *, user_id: str | None) -> None:
+        self._assert_holds_slot(user_id)
+        if self._sequence is None or self._sequence.state != STATE_RUNNING:
+            raise HomeAssistantError("no running sequence on this telescope")
+        self._sequence.state = STATE_PAUSED
+        await self._async_save_sequence()
+        self._notify()
+
+    async def async_resume_sequence(self, *, user_id: str | None) -> None:
+        holder = self._assert_holds_slot(user_id)
+        if self._sequence is None or self._sequence_reservation_id != holder.id:
+            raise HomeAssistantError("no paused sequence for this reservation")
+        if self._sequence.state != STATE_PAUSED:
+            raise HomeAssistantError("sequence is not paused")
+        self._sequence.state = STATE_RUNNING
+        await self._async_save_sequence()
+        self._notify()
+        if self._sequence_task is None or self._sequence_task.done():
+            self._sequence_task = self.hass.async_create_task(self._async_run_sequence(holder.id))
+
+    async def async_cancel_sequence(self, *, user_id: str | None) -> None:
+        self._assert_holds_slot(user_id)
+        if self._sequence is None:
+            raise HomeAssistantError("no sequence on this telescope")
+        self._sequence.state = STATE_CANCELLED
+        await self._async_save_sequence()
+        self._notify()
+
+    def _async_check_sequence_still_valid(self, holder: Reservation | None) -> None:
+        """A reservation ending mid-sequence cancels it - checked every 15s
+        tick so it doesn't have to wait for the current sub's sleep to end."""
+        if self._sequence is None or self._sequence.state not in (STATE_RUNNING, STATE_PAUSED):
+            return
+        if holder is None or holder.id != self._sequence_reservation_id:
+            self._sequence.state = STATE_CANCELLED
+
+    async def _async_run_sequence(self, reservation_id: str) -> None:
+        sequence = self._sequence
+        if sequence is None:
+            return
+        try:
+            while sequence.state == STATE_RUNNING:
+                if not sequence.skip_completed_steps():
+                    sequence.state = STATE_DONE
+                    break
+                holder = self.current_holder()
+                if holder is None or holder.id != reservation_id:
+                    sequence.state = STATE_CANCELLED
+                    break
+
+                step = sequence.current()
+                if step.needs_autofocus() and self._has_capability(CAP_AUTO_FOCUS):
+                    await self._async_dispatch_capability(CAP_AUTO_FOCUS)
+                    await asyncio.sleep(SEQUENCE_AUTOFOCUS_SETTLE.total_seconds())
+                    if sequence.state != STATE_RUNNING:
+                        break
+
+                if step.filter is not None:
+                    await self._async_dispatch_capability(CAP_SET_FILTER, step.filter)
+                if step.ccd_temperature is not None:
+                    await self._async_dispatch_capability(CAP_SET_CCD_TEMPERATURE, step.ccd_temperature)
+                await self._async_dispatch_capability(CAP_SET_EXPOSURE, step.exposure)
+                await self._async_dispatch_capability(CAP_START_CAPTURE)
+
+                wait_seconds = self._exposure_wait_seconds(step.exposure) + SEQUENCE_READOUT_BUFFER.total_seconds()
+                await asyncio.sleep(wait_seconds)
+
+                # The exposure already happened even if paused/cancelled
+                # partway through the wait above, so it still counts.
+                sequence.record_sub_done()
+                await self._async_save_sequence()
+                self._notify()
+        except asyncio.CancelledError:
+            raise
+        except HomeAssistantError as err:
+            _LOGGER.warning("Sequence for %s stopped: %s", self.name, err)
+            sequence.state = STATE_CANCELLED
+        finally:
+            await self._async_save_sequence()
+            self._notify()
 
     # -- recording / frame capture ------------------------------------------
 
@@ -293,6 +483,8 @@ class TelescopeCoordinator:
 
     async def _async_tick_async(self, now: datetime) -> None:
         holder = self.current_holder(now)
+        await self._async_sync_controls_enabled(holder)
+        self._async_check_sequence_still_valid(holder)
         if holder is not None and holder.recording:
             last = self._last_capture.get(holder.id)
             if last is None or now - last >= self.capture_interval:
@@ -304,3 +496,25 @@ class TelescopeCoordinator:
         else:
             self._last_capture.clear()
         self._notify()
+
+    async def _async_sync_controls_enabled(self, holder: Reservation | None) -> None:
+        """Arm/disarm a backend's session-lifecycle gate (e.g. ha-seestar's
+        "Controls enabled" switch, without which it refuses every command)
+        to track whether a reservation is currently active - "arm before
+        commanding, disarm after", automatically, per the upstream backend's
+        own safety guidance. No-ops when the capability isn't mapped (e.g.
+        ha-indi-client, which has no such gate)."""
+        entity_id = self.capability_map.get(CAP_CONTROLS_ENABLED)
+        if not entity_id or not entity_id.startswith("switch."):
+            return
+        holder_id = holder.id if holder is not None else None
+        if holder_id == self._armed_reservation_id:
+            return
+        service = "turn_on" if holder_id is not None else "turn_off"
+        try:
+            await self.hass.services.async_call(
+                "switch", service, {"entity_id": entity_id}, blocking=True
+            )
+            self._armed_reservation_id = holder_id
+        except HomeAssistantError as err:
+            _LOGGER.warning("Could not %s controls-enabled gate for %s: %s", service, self.name, err)

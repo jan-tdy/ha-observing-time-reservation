@@ -31,10 +31,19 @@ def _telescope_info(registry: er.EntityRegistry, coordinator: TelescopeCoordinat
         "in_use_entity": _entity_id("binary_sensor", "in_use"),
         "availability_entity": _entity_id("sensor", "availability"),
         "usage_entity": _entity_id("sensor", "usage"),
+        "sequence_entity": _entity_id("sensor", "sequence"),
         "calendar_entity": _entity_id("calendar", "reservations"),
         "live_camera_entity": coordinator.reference_entity(REF_LIVE_CAMERA),
         "preview_camera_entity": coordinator.reference_entity(REF_PREVIEW_CAMERA),
         "status_sensor_entity": coordinator.reference_entity(REF_STATUS_SENSOR),
+        # Every mapped action capability -> its target entity_id. Exposed so
+        # the UI can inspect the *actual* target entity at click time
+        # (domain, current .attributes.options, unit_of_measurement, ...)
+        # instead of guessing option labels or units that differ by backend
+        # (e.g. ha-indi-client's Park is a `select` with driver-defined
+        # option text; ha-seestar's is a `button` with none at all), and so
+        # it can hide controls for capabilities nobody mapped.
+        "capability_map": dict(coordinator.capability_map),
     }
 
 
