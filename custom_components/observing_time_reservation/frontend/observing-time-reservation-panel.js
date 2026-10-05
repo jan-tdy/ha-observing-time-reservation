@@ -193,7 +193,7 @@ class ObservingTimeReservationPanel extends HTMLElement {
 
     if (!this._telescopes) {
       this.shadowRoot.innerHTML = `<style>${this._styles()}</style>
-        <div class="page loading"><ha-circular-progress indeterminate></ha-circular-progress></div>`;
+        <div class="page loading"><ha-spinner></ha-spinner></div>`;
       return;
     }
 
@@ -281,10 +281,10 @@ class ObservingTimeReservationPanel extends HTMLElement {
       <div class="section">
         <h2>Book a slot</h2>
         <div class="row">
-          <ha-textfield id="start-input" label="Start" type="datetime-local" value="${defaultStart}"></ha-textfield>
-          <ha-textfield id="end-input" label="End" type="datetime-local" value="${defaultEnd}"></ha-textfield>
+          <ha-input id="start-input" label="Start" type="datetime-local" value="${defaultStart}"></ha-input>
+          <ha-input id="end-input" label="End" type="datetime-local" value="${defaultEnd}"></ha-input>
         </div>
-        <ha-button id="reserve-btn" raised ${this._pending ? "disabled" : ""}>Reserve</ha-button>
+        <ha-button id="reserve-btn" appearance="accent" ${this._pending ? "disabled" : ""}>Reserve</ha-button>
       </div>
     `;
   }
@@ -306,11 +306,11 @@ class ObservingTimeReservationPanel extends HTMLElement {
       <div class="section">
         <h2><ha-icon icon="mdi:crosshairs-gps"></ha-icon> Goto</h2>
         <div class="row">
-          <ha-textfield id="ra-input" label="RA"></ha-textfield>
-          <ha-textfield id="dec-input" label="Dec"></ha-textfield>
+          <ha-input id="ra-input" label="RA"></ha-input>
+          <ha-input id="dec-input" label="Dec"></ha-input>
         </div>
         <div class="row buttons">
-          <ha-button id="goto-btn" raised>Goto</ha-button>
+          <ha-button id="goto-btn" appearance="accent">Goto</ha-button>
           <ha-button id="stop-goto-btn">Stop</ha-button>
         </div>
       </div>
@@ -318,13 +318,13 @@ class ObservingTimeReservationPanel extends HTMLElement {
       <div class="section">
         <h2><ha-icon icon="mdi:camera-iris"></ha-icon> Imaging</h2>
         <div class="row">
-          <ha-textfield id="exposure-input" label="Exposure (s)" type="number"></ha-textfield>
-          <ha-textfield id="filter-input" label="Filter"></ha-textfield>
-          <ha-textfield id="focus-input" label="Focus"></ha-textfield>
-          <ha-textfield id="temp-input" label="CCD temp (C)" type="number"></ha-textfield>
+          <ha-input id="exposure-input" label="Exposure (s)" type="number"></ha-input>
+          <ha-input id="filter-input" label="Filter"></ha-input>
+          <ha-input id="focus-input" label="Focus"></ha-input>
+          <ha-input id="temp-input" label="CCD temp (C)" type="number"></ha-input>
         </div>
         <div class="row buttons">
-          <ha-button id="start-capture-btn" raised>Start capture</ha-button>
+          <ha-button id="start-capture-btn" appearance="accent">Start capture</ha-button>
           <ha-button id="stop-capture-btn">Stop capture</ha-button>
         </div>
         <div class="row buttons">
@@ -396,8 +396,8 @@ class ObservingTimeReservationPanel extends HTMLElement {
         <h2><ha-icon icon="mdi:shield-account"></ha-icon> Admin</h2>
         <p class="hint">Set the next availability window for this telescope.</p>
         <div class="row">
-          <ha-textfield id="admin-start-input" label="Open from" type="datetime-local"></ha-textfield>
-          <ha-textfield id="admin-end-input" label="Open until" type="datetime-local"></ha-textfield>
+          <ha-input id="admin-start-input" label="Open from" type="datetime-local"></ha-input>
+          <ha-input id="admin-end-input" label="Open until" type="datetime-local"></ha-input>
         </div>
         <ha-button id="set-availability-btn">Set availability</ha-button>
 
@@ -513,7 +513,7 @@ class ObservingTimeReservationPanel extends HTMLElement {
       .row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
       .row.buttons { align-items: center; }
       .switch-row { display: flex; align-items: center; gap: 8px; }
-      ha-textfield { flex: 1 1 140px; }
+      ha-input { flex: 1 1 140px; }
       ul.windows, ul.log { margin: 0; padding-left: 20px; }
       ul.log { font-family: var(--code-font-family, monospace); font-size: 0.85em; color: var(--secondary-text-color); }
       p.hint { color: var(--secondary-text-color); font-size: 0.9em; margin: 4px 0; }

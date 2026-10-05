@@ -4,7 +4,7 @@
  * Plain custom element (no bundler, no external deps) so it ships straight
  * from the integration with nothing to build. It only ever uses the native
  * elements the Home Assistant frontend itself registers globally
- * (ha-card, ha-textfield, ha-select, ha-switch, ha-alert, ha-button, ...)
+ * (ha-card, ha-input, ha-select, ha-switch, ha-alert, ha-button, ...)
  * so dropdowns/inputs look and behave exactly like the rest of HA.
  *
  * Config:
@@ -210,10 +210,10 @@ class ObservingTimeReservationCard extends HTMLElement {
       <div class="section">
         <h3>Book a slot</h3>
         <div class="row">
-          <ha-textfield id="start-input" label="Start" type="datetime-local" value="${defaultStart}"></ha-textfield>
-          <ha-textfield id="end-input" label="End" type="datetime-local" value="${defaultEnd}"></ha-textfield>
+          <ha-input id="start-input" label="Start" type="datetime-local" value="${defaultStart}"></ha-input>
+          <ha-input id="end-input" label="End" type="datetime-local" value="${defaultEnd}"></ha-input>
         </div>
-        <ha-button id="reserve-btn" raised ${this._pending ? "disabled" : ""}>Reserve</ha-button>
+        <ha-button id="reserve-btn" appearance="accent" ${this._pending ? "disabled" : ""}>Reserve</ha-button>
       </div>
     `;
   }
@@ -246,11 +246,11 @@ class ObservingTimeReservationCard extends HTMLElement {
       <div class="section">
         <h3>Goto</h3>
         <div class="row">
-          <ha-textfield id="ra-input" label="RA"></ha-textfield>
-          <ha-textfield id="dec-input" label="Dec"></ha-textfield>
+          <ha-input id="ra-input" label="RA"></ha-input>
+          <ha-input id="dec-input" label="Dec"></ha-input>
         </div>
         <div class="row buttons">
-          <ha-button id="goto-btn" raised>Goto</ha-button>
+          <ha-button id="goto-btn" appearance="accent">Goto</ha-button>
           <ha-button id="stop-goto-btn">Stop</ha-button>
         </div>
       </div>
@@ -258,13 +258,13 @@ class ObservingTimeReservationCard extends HTMLElement {
       <div class="section">
         <h3>Imaging</h3>
         <div class="row">
-          <ha-textfield id="exposure-input" label="Exposure (s)" type="number"></ha-textfield>
-          <ha-textfield id="filter-input" label="Filter"></ha-textfield>
-          <ha-textfield id="focus-input" label="Focus"></ha-textfield>
-          <ha-textfield id="temp-input" label="CCD temp (C)" type="number"></ha-textfield>
+          <ha-input id="exposure-input" label="Exposure (s)" type="number"></ha-input>
+          <ha-input id="filter-input" label="Filter"></ha-input>
+          <ha-input id="focus-input" label="Focus"></ha-input>
+          <ha-input id="temp-input" label="CCD temp (C)" type="number"></ha-input>
         </div>
         <div class="row buttons">
-          <ha-button id="start-capture-btn" raised>Start capture</ha-button>
+          <ha-button id="start-capture-btn" appearance="accent">Start capture</ha-button>
           <ha-button id="stop-capture-btn">Stop capture</ha-button>
         </div>
         <div class="row buttons">
@@ -293,8 +293,8 @@ class ObservingTimeReservationCard extends HTMLElement {
         <h3><ha-icon icon="mdi:shield-account"></ha-icon> Admin</h3>
         <p class="hint">Set the next availability window for this telescope.</p>
         <div class="row">
-          <ha-textfield id="admin-start-input" label="Open from" type="datetime-local"></ha-textfield>
-          <ha-textfield id="admin-end-input" label="Open until" type="datetime-local"></ha-textfield>
+          <ha-input id="admin-start-input" label="Open from" type="datetime-local"></ha-input>
+          <ha-input id="admin-end-input" label="Open until" type="datetime-local"></ha-input>
         </div>
         <ha-button id="set-availability-btn">Set availability</ha-button>
 
@@ -392,7 +392,7 @@ class ObservingTimeReservationCard extends HTMLElement {
       .row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
       .row.buttons { align-items: center; }
       .switch-row { display: flex; align-items: center; gap: 8px; }
-      ha-textfield { flex: 1 1 140px; }
+      ha-input { flex: 1 1 140px; }
       ul.windows { margin: 0; padding-left: 20px; }
       p.hint { color: var(--secondary-text-color); font-size: 0.9em; margin: 4px 0; }
       img.preview { width: 100%; border-radius: var(--ha-card-border-radius, 12px); display: block; }
