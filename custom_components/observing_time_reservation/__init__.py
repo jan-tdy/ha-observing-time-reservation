@@ -33,6 +33,10 @@ _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = ["calendar", "binary_sensor", "sensor"]
 
+# Everything is configured through config entries (the config_flow) - there is
+# no YAML configuration for this integration.
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+
 CARD_URL_PATH = f"/{DOMAIN}/observing-time-reservation-card.js"
 CARD_DIR = Path(__file__).parent / "frontend"
 

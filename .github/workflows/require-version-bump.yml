@@ -22,7 +22,11 @@ jobs:
 
       - name: Require a manifest.json version bump
         run: |
-          base_version=$(git show "origin/${{ github.base_ref }}:custom_components/observing_time_reservation/manifest.json" | python3 -c "import json,sys; print(json.load(sys.stdin)['version'])")
+          if git show "origin/${{ github.base_ref }}:custom_components/observing_time_reservation/manifest.json" > /tmp/base_manifest.json 2>/dev/null; then
+            base_version=$(python3 -c "import json; print(json.load(open('/tmp/base_manifest.json'))['version'])")
+          else
+            base_version="(integration not present on base branch)"
+          fi
           head_version=$(python3 -c "import json; print(json.load(open('custom_components/observing_time_reservation/manifest.json'))['version'])")
           echo "base version: $base_version"
           echo "head version: $head_version"
