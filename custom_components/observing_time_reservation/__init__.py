@@ -30,6 +30,7 @@ from .const import (
 )
 from .coordinator import TelescopeCoordinator
 from .reservation import ReservationError
+from .websocket_api import async_setup_websocket_api
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -39,8 +40,14 @@ PLATFORMS = ["calendar", "binary_sensor", "sensor"]
 # no YAML configuration for this integration.
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
-CARD_URL_PATH = f"/{DOMAIN}/observing-time-reservation-card.js"
-CARD_DIR = Path(__file__).parent / "frontend"
+CARD_FILENAME = "observing-time-reservation-card.js"
+PANEL_FILENAME = "observing-time-reservation-panel.js"
+PANEL_WEBCOMPONENT_NAME = "observing-time-reservation-panel"
+PANEL_URL_PATH = "observing-time-reservation"
+
+CARD_URL_PATH = f"/{DOMAIN}/{CARD_FILENAME}"
+PANEL_JS_URL_PATH = f"/{DOMAIN}/{PANEL_FILENAME}"
+FRONTEND_DIR = Path(__file__).parent / "frontend"
 
 
 def _coordinator_for(hass: HomeAssistant, config_entry_id: str) -> TelescopeCoordinator:
@@ -58,24 +65,51 @@ def _user_name(hass: HomeAssistant, user_id: str | None) -> str:
 
 
 async def async_setup(hass: HomeAssistant, _config: dict) -> bool:
-    """Register the frontend card and the domain-wide services once."""
+    """Register the frontend assets, the panel, the websocket API and the
+    domain-wide services once."""
     hass.data.setdefault(DOMAIN, {})
 
-    if CARD_DIR.exists():
-        card_path = str(CARD_DIR / "observing-time-reservation-card.js")
+    if FRONTEND_DIR.exists():
+        card_path = str(FRONTEND_DIR / CARD_FILENAME)
+        panel_path = str(FRONTEND_DIR / PANEL_FILENAME)
+        static_configs = [(CARD_URL_PATH, card_path), (PANEL_JS_URL_PATH, panel_path)]
         if hasattr(hass.http, "async_register_static_paths"):
             # HA >= 2024.7
             from homeassistant.components.http import StaticPathConfig
 
             await hass.http.async_register_static_paths(
-                [StaticPathConfig(CARD_URL_PATH, card_path, cache_headers=False)]
+                [
+                    StaticPathConfig(url_path, path, cache_headers=False)
+                    for url_path, path in static_configs
+                ]
             )
         else:
-            hass.http.register_static_path(CARD_URL_PATH, card_path, cache_headers=False)
+            for url_path, path in static_configs:
+                hass.http.register_static_path(url_path, path, cache_headers=False)
 
         from homeassistant.components.frontend import add_extra_js_url
 
+        # The small Lovelace card: still useful for a compact dashboard tile.
         add_extra_js_url(hass, CARD_URL_PATH)
+
+        # The full-page sidebar panel: the primary, CCDciel-style interface,
+        # covering every telescope (it discovers them itself over websocket,
+        # see websocket_api.py) rather than needing one card per telescope.
+        from homeassistant.components import frontend, panel_custom
+
+        if not frontend.async_panel_exists(hass, PANEL_URL_PATH):
+            await panel_custom.async_register_panel(
+                hass,
+                frontend_url_path=PANEL_URL_PATH,
+                webcomponent_name=PANEL_WEBCOMPONENT_NAME,
+                sidebar_title="Observing Time",
+                sidebar_icon="mdi:telescope",
+                module_url=PANEL_JS_URL_PATH,
+                embed_iframe=False,
+                require_admin=False,
+            )
+
+    async_setup_websocket_api(hass)
 
     async def _handle_reserve(call: ServiceCall) -> None:
         coordinator = _coordinator_for(hass, call.data[ATTR_CONFIG_ENTRY_ID])

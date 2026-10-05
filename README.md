@@ -4,11 +4,13 @@
 [![Validate](https://github.com/jan-tdy/ha-observing-time-reservation/actions/workflows/validate.yml/badge.svg)](https://github.com/jan-tdy/ha-observing-time-reservation/actions/workflows/validate.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-A [Home Assistant](https://www.home-assistant.io/) **custom integration + Lovelace
-card** that lets clients reserve observing time on a telescope, and then - for the
-exact duration of their slot, nothing before or after - unlocks a full telescope
-control panel right in the same card: goto, park/tracking, exposure/filter/focuser,
-live preview and frame saving.
+A [Home Assistant](https://www.home-assistant.io/) **custom integration + a full
+sidebar panel** that lets clients reserve observing time on a telescope, and then -
+for the exact duration of their slot, nothing before or after - unlocks a
+full-page telescope control view: goto, park/tracking, exposure/filter/focuser,
+live preview and frame saving. It's a sidebar item (like Map or Energy), not a
+small dashboard tile - the goal is something that actually replaces CCDciel for
+the observing session itself, not a status widget.
 
 Built for the **Bombol.Space** telescope hosting facility, part of the
 **DevControl2** project. It is backend-agnostic: it talks to whatever entities
@@ -34,12 +36,18 @@ ha-indi-client / ha-seestar   -->  normal HA entities (number, select, button, c
     - usage log per client, for the admin to invoice manually elsewhere
                                               |
                                               v
-                 observing-time-reservation-card (Lovelace card, ships inside
-                 this integration, no manual resource/build step needed)
-    - booking view: availability + "reserve a slot" + "my reservations"
+                 "Observing Time" sidebar panel (full page, ships inside this
+                 integration, discovers every telescope itself over websocket -
+                 nothing to configure)
+    - tabs across the top if you have more than one telescope
+    - booking view: availability + "reserve a slot"
     - control view: unlocks automatically for whoever currently holds the slot
     - admin view: set the next availability window, see usage per client
 ```
+
+A small Lovelace card (`observing-time-reservation-card`) ships alongside the
+panel too, for a compact status/booking tile on a regular dashboard - but the
+panel is the primary interface and needs no per-card configuration.
 
 One config entry = one telescope. Add as many as you have (today: one, with more
 coming) - each gets its own calendar/sensor/binary_sensor entities and capability
@@ -90,7 +98,40 @@ domain (`button.press`, `number.set_value`, `select.select_option`,
 `text.set_value`, `switch.turn_on`/`turn_off`), so the admin never has to name a
 service by hand.
 
-## Adding the card
+## The "Observing Time" panel (primary interface)
+
+After installing and setting up at least one telescope, an **"Observing Time"**
+item appears in the HA sidebar automatically - nothing to add to a dashboard,
+no entity ids to type anywhere. It covers every telescope you've configured
+(with tabs across the top if you have more than one), discovering each one's
+entities itself over a small websocket API the integration registers
+(`observing_time_reservation/list_telescopes`).
+
+### What a client sees
+
+- **Free / someone else's slot:** the open availability windows and a start/end
+  picker to reserve a slot inside one of them.
+- **Their own active slot:** the booking form is replaced by the control panel -
+  park/unpark, tracking, goto (RA/Dec + execute/stop), exposure/filter/focuser/CCD
+  temperature, start/stop capture, a live preview image, a "save every frame"
+  switch and a manual "save frame now" button, plus the session log if the
+  backend exposes one. Every button is just a thin wrapper around the
+  `observing_time_reservation.send_command` service, which the integration
+  *re-checks server-side* against the active reservation before touching any
+  entity - so this isn't just a UI lock, a client cannot drive the scope
+  outside their booked slot even by calling the service directly.
+
+### What an admin additionally sees
+
+A panel to open the next availability window (start/end), and a per-client
+usage table (sessions + total minutes) to invoice manually outside this system -
+billing itself is intentionally out of scope for now.
+
+## Adding the card (optional, compact dashboard tile)
+
+A small Lovelace card ships alongside the panel for a quick status/booking
+widget on a regular dashboard - the panel above is the full interface and
+needs none of this configuration.
 
 ```yaml
 type: custom:observing-time-reservation-card
@@ -105,27 +146,8 @@ preview_camera_entity: camera.bombol_1_ccd # optional, same entity you mapped fo
 
 The card ships with a graphical editor too (native `ha-form`), so you can add it
 through **Edit dashboard -> Add card -> Observing Time Reservation** instead of
-hand-writing YAML.
-
-### What a client sees
-
-- **Free / someone else's slot:** the open availability windows, a start/end
-  picker to reserve a slot inside one of them, and their own upcoming
-  reservations.
-- **Their own active slot:** the booking form is replaced by the control panel -
-  park/unpark, tracking, goto (RA/Dec + execute/stop), exposure/filter/focuser/CCD
-  temperature, start/stop capture, a live preview image, a "save every frame"
-  switch and a manual "save frame now" button. Every button is just a thin
-  wrapper around the `observing_time_reservation.send_command` service, which the
-  integration *re-checks server-side* against the active reservation before
-  touching any entity - so this isn't just a UI lock, a client cannot drive the
-  scope outside their paid/booked slot even by calling the service directly.
-
-### What an admin additionally sees
-
-A small panel to open the next availability window (start/end), and a per-client
-usage table (sessions + total minutes) to invoice manually outside this system -
-billing itself is intentionally out of scope for now.
+hand-writing YAML. It behaves the same way as the panel (booking view /
+control view / admin view), just scaled down to card size.
 
 ## Services
 
