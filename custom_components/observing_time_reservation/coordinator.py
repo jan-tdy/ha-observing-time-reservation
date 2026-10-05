@@ -194,12 +194,14 @@ class TelescopeCoordinator:
     def capability_map(self) -> dict:
         return self.entry.options.get(CONF_CAPABILITY_MAP, {})
 
-    def _is_admin(self, user_id: str | None) -> bool:
+    async def _is_admin(self, user_id: str | None) -> bool:
         if user_id is None:
             return True  # internal/automation call
         if user_id in self.admin_user_ids:
             return True
-        user = self.hass.auth.async_get_user(user_id) if hasattr(self.hass, "auth") else None
+        if not hasattr(self.hass, "auth"):
+            return False
+        user = await self.hass.auth.async_get_user(user_id)
         return bool(user and user.is_admin)
 
     # -- reservations ---------------------------------------------------------
@@ -237,7 +239,7 @@ class TelescopeCoordinator:
     async def async_cancel(self, *, reservation_id: str, user_id: str | None) -> None:
         for res in self.store.reservations:
             if res.id == reservation_id:
-                if res.client_user_id != user_id and not self._is_admin(user_id):
+                if res.client_user_id != user_id and not await self._is_admin(user_id):
                     raise HomeAssistantError("only the owning client or an admin can cancel this reservation")
                 res.cancelled = True
                 await self.store.async_save()
@@ -246,7 +248,7 @@ class TelescopeCoordinator:
         raise HomeAssistantError(f"unknown reservation_id {reservation_id}")
 
     async def async_set_availability(self, *, user_id: str | None, windows: list[dict]) -> None:
-        if not self._is_admin(user_id):
+        if not await self._is_admin(user_id):
             raise HomeAssistantError("only an admin can set the availability window")
         parsed = [Window(start=dt_util.parse_datetime(w["start"]), end=dt_util.parse_datetime(w["end"])) for w in windows]
         for window in parsed:
@@ -258,8 +260,8 @@ class TelescopeCoordinator:
 
     # -- access control ---------------------------------------------------
 
-    def _assert_holds_slot(self, user_id: str | None) -> Reservation:
-        if self._is_admin(user_id):
+    async def _assert_holds_slot(self, user_id: str | None) -> Reservation:
+        if await self._is_admin(user_id):
             holder = self.current_holder()
             if holder is None:
                 raise HomeAssistantError("no active reservation on this telescope right now")
@@ -296,7 +298,7 @@ class TelescopeCoordinator:
         same widget HA itself uses) - the domain.service call is inferred from
         that entity's domain, so there is nothing for the admin to get wrong.
         """
-        self._assert_holds_slot(user_id)
+        await self._assert_holds_slot(user_id)
         if not self._has_capability(capability):
             raise HomeAssistantError(f"capability '{capability}' is not configured for this telescope")
         await self._async_dispatch_capability(capability, value)
@@ -344,7 +346,7 @@ class TelescopeCoordinator:
         await self.store.async_save()
 
     async def async_start_sequence(self, *, user_id: str | None, steps: list[dict]) -> None:
-        holder = self._assert_holds_slot(user_id)
+        holder = await self._assert_holds_slot(user_id)
         if self._sequence_task is not None and not self._sequence_task.done():
             raise HomeAssistantError("a sequence is already running on this telescope")
         if not self._has_capability(CAP_SET_EXPOSURE):
@@ -362,7 +364,7 @@ class TelescopeCoordinator:
         self._sequence_task = self.hass.async_create_task(self._async_run_sequence(holder.id))
 
     async def async_pause_sequence(self, *, user_id: str | None) -> None:
-        self._assert_holds_slot(user_id)
+        await self._assert_holds_slot(user_id)
         if self._sequence is None or self._sequence.state != STATE_RUNNING:
             raise HomeAssistantError("no running sequence on this telescope")
         self._sequence.state = STATE_PAUSED
@@ -370,7 +372,7 @@ class TelescopeCoordinator:
         self._notify()
 
     async def async_resume_sequence(self, *, user_id: str | None) -> None:
-        holder = self._assert_holds_slot(user_id)
+        holder = await self._assert_holds_slot(user_id)
         if self._sequence is None or self._sequence_reservation_id != holder.id:
             raise HomeAssistantError("no paused sequence for this reservation")
         if self._sequence.state != STATE_PAUSED:
@@ -382,7 +384,7 @@ class TelescopeCoordinator:
             self._sequence_task = self.hass.async_create_task(self._async_run_sequence(holder.id))
 
     async def async_cancel_sequence(self, *, user_id: str | None) -> None:
-        self._assert_holds_slot(user_id)
+        await self._assert_holds_slot(user_id)
         if self._sequence is None:
             raise HomeAssistantError("no sequence on this telescope")
         self._sequence.state = STATE_CANCELLED
@@ -445,13 +447,13 @@ class TelescopeCoordinator:
     # -- recording / frame capture ------------------------------------------
 
     async def async_set_recording(self, *, user_id: str | None, enabled: bool) -> None:
-        holder = self._assert_holds_slot(user_id)
+        holder = await self._assert_holds_slot(user_id)
         holder.recording = enabled
         await self.store.async_save()
         self._notify()
 
     async def async_save_frame(self, *, user_id: str | None) -> str:
-        holder = self._assert_holds_slot(user_id)
+        holder = await self._assert_holds_slot(user_id)
         return await self._async_capture_frame(holder)
 
     async def _async_capture_frame(self, reservation: Reservation) -> str:
