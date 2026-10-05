@@ -11,6 +11,7 @@ from typing import Any
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.core import callback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import selector
 
 from .const import (
@@ -26,7 +27,7 @@ from .const import (
     CONF_MAX_DURATION,
     CONF_MIN_DURATION,
     CONF_SLOT_STEP,
-    CONF_SOURCE_DEVICE_ID,
+    CONF_SOURCE_DEVICE_IDS,
     DEFAULT_CAPTURE_INTERVAL,
     DEFAULT_IMAGE_BASE_PATH,
     DEFAULT_MAX_DURATION,
@@ -104,13 +105,17 @@ class ObservingTimeReservationConfigFlow(config_entries.ConfigFlow, domain=DOMAI
             BACKEND_SEESTAR: None,  # ha-seestar publishes via MQTT discovery, no fixed domain
         }.get(backend)
 
-        device_selector_config: dict[str, Any] = {}
+        device_selector_config: dict[str, Any] = {"multiple": True}
         if integration_filter:
             device_selector_config["integration"] = integration_filter
 
+        # A telescope is rarely a single HA device - INDI gives the mount,
+        # CCD/camera, focuser and filter wheel each their own device. Pick
+        # every one that belongs to this telescope; the capability-mapping
+        # step below then only offers entities from these devices.
         schema = vol.Schema(
             {
-                vol.Optional(CONF_SOURCE_DEVICE_ID): selector.selector(
+                vol.Optional(CONF_SOURCE_DEVICE_IDS, default=[]): selector.selector(
                     {"device": device_selector_config}
                 ),
             }
@@ -158,6 +163,12 @@ class ObservingTimeReservationOptionsFlow(config_entries.OptionsFlow):
                 vol.Optional(
                     CONF_ADMIN_USER_IDS, default=current.get(CONF_ADMIN_USER_IDS, [])
                 ): selector.selector({"text": {"multiple": True}}),
+                vol.Optional(
+                    CONF_SOURCE_DEVICE_IDS,
+                    default=current.get(
+                        CONF_SOURCE_DEVICE_IDS, self._entry.data.get(CONF_SOURCE_DEVICE_IDS, [])
+                    ),
+                ): selector.selector({"device": {"multiple": True}}),
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema)
@@ -169,6 +180,25 @@ class ObservingTimeReservationOptionsFlow(config_entries.OptionsFlow):
             return self.async_create_entry(title="", data=self._options)
 
         current_map = self._entry.options.get(CONF_CAPABILITY_MAP, {})
+        device_ids = self._options.get(
+            CONF_SOURCE_DEVICE_IDS, self._entry.data.get(CONF_SOURCE_DEVICE_IDS, [])
+        )
+        entity_selector_config: dict[str, Any] = {}
+        if device_ids:
+            # Scope every entity picker to this telescope's own devices
+            # (mount, CCD/camera, focuser, filter wheel, ...) instead of
+            # listing every entity in the house.
+            registry = er.async_get(self.hass)
+            include_entities = [
+                entity.entity_id
+                for device_id in device_ids
+                for entity in er.async_entries_for_device(
+                    registry, device_id, include_disabled_entities=False
+                )
+            ]
+            if include_entities:
+                entity_selector_config["include_entities"] = include_entities
+
         fields = {}
         for capability in ALL_CAPABILITIES:
             # HA's entity selector rejects "" as a default, so only mapped
@@ -179,7 +209,7 @@ class ObservingTimeReservationOptionsFlow(config_entries.OptionsFlow):
                 if existing
                 else vol.Optional(capability)
             )
-            fields[key] = selector.selector({"entity": {}})
+            fields[key] = selector.selector({"entity": entity_selector_config})
         return self.async_show_form(
             step_id="capabilities",
             data_schema=vol.Schema(fields),

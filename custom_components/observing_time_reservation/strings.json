@@ -9,9 +9,10 @@
         }
       },
       "device": {
-        "title": "Link the physical telescope",
+        "title": "Link the physical telescope's devices",
+        "description": "A telescope is rarely one HA device - INDI gives the mount, CCD/camera, focuser and filter wheel each their own device. Pick every device (from ha-indi-client or ha-seestar) that belongs to this telescope; you can change this later.",
         "data": {
-          "source_device_id": "HA device (from ha-indi-client or ha-seestar)"
+          "source_device_ids": "HA devices"
         }
       }
     }
@@ -26,12 +27,13 @@
           "slot_step_minutes": "Start time granularity",
           "image_base_path": "Captured frames base folder",
           "capture_interval_seconds": "Auto-save interval while recording",
-          "admin_user_ids": "Admin HA user IDs"
+          "admin_user_ids": "Admin HA user IDs",
+          "source_device_ids": "HA devices belonging to this telescope"
         }
       },
       "capabilities": {
         "title": "Control entity mapping",
-        "description": "Pick the entity that already exists (from ha-indi-client or ha-seestar) for each capability. Leave blank to hide that control for clients."
+        "description": "Pick the entity that already exists (from ha-indi-client or ha-seestar) for each capability. Leave blank to hide that control for clients. The pickers only list entities from the devices chosen in the previous step."
       }
     }
   }
