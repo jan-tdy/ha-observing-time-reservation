@@ -51,6 +51,8 @@ class ObservingTimeReservationCard extends HTMLElement {
     this._config = config;
     this._error = null;
     this._pending = false;
+    this._capabilityMap = null;
+    this._capabilityMapPromise = null;
     if (!this.shadowRoot) {
       this.attachShadow({ mode: "open" });
     }
@@ -59,11 +61,58 @@ class ObservingTimeReservationCard extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
+    this._maybeLoadCapabilities();
     const signature = this._relevantSignature();
     if (signature !== this._lastSignature) {
       this._lastSignature = signature;
       this._render();
     }
+  }
+
+  // The card config only ever names a handful of *display* entities
+  // (in_use/availability/usage/camera); which entity each *control*
+  // capability (park, goto, exposure, ...) is mapped to lives server-side.
+  // Fetch it once via the same websocket command the full panel uses, so
+  // this card can hide controls nobody configured instead of guessing.
+  _maybeLoadCapabilities() {
+    if (this._capabilityMapPromise || !this._hass || !this._config) return;
+    this._capabilityMapPromise = this._hass
+      .callWS({ type: `${DOMAIN}/list_telescopes` })
+      .then((data) => {
+        const mine = (data.telescopes || []).find((t) => t.entry_id === this._config.config_entry_id);
+        this._capabilityMap = (mine && mine.capability_map) || {};
+        this._render();
+      })
+      .catch(() => {
+        this._capabilityMap = {};
+      });
+  }
+
+  // -- capability helpers (see observing-time-reservation-panel.js for why
+  // option labels/units are resolved live from the target entity's state
+  // rather than hardcoded) ------------------------------------------------
+
+  _capabilityEntity(cap) {
+    return (this._capabilityMap && this._capabilityMap[cap]) || null;
+  }
+
+  _hasCapability(cap) {
+    return !!this._capabilityEntity(cap);
+  }
+
+  _resolveCapabilityValue(cap, hint, fallback) {
+    const entityId = this._capabilityEntity(cap);
+    if (!entityId || entityId.split(".")[0] !== "select") return fallback;
+    const state = this._hass.states[entityId];
+    const options = (state && state.attributes && state.attributes.options) || [];
+    const match = options.find((o) => o.toLowerCase().includes(hint.toLowerCase()));
+    return match || fallback;
+  }
+
+  _unitFor(cap) {
+    const entityId = this._capabilityEntity(cap);
+    const state = entityId ? this._hass.states[entityId] : null;
+    return (state && state.attributes && state.attributes.unit_of_measurement) || "";
   }
 
   // Avoid tearing down input fields (and losing whatever the client is
@@ -78,7 +127,10 @@ class ObservingTimeReservationCard extends HTMLElement {
       this._config.live_camera_entity,
       this._config.preview_camera_entity,
     ].filter(Boolean);
-    return JSON.stringify(ids.map((id) => this._hass.states[id] && this._hass.states[id].last_updated));
+    return JSON.stringify([
+      ids.map((id) => this._hass.states[id] && this._hass.states[id].last_updated),
+      !!this._capabilityMap,
+    ]);
   }
 
   getCardSize() {
@@ -226,22 +278,48 @@ class ObservingTimeReservationCard extends HTMLElement {
         ? `${cameraState.attributes.entity_picture}&t=${Date.now()}`
         : null;
 
+    const has = (cap) => this._hasCapability(cap);
+    const exposureUnit = this._unitFor("set_exposure");
+
+    const mountRow = [
+      has("park") ? `<ha-button id="park-btn">Park</ha-button>` : "",
+      has("unpark") ? `<ha-button id="unpark-btn">Unpark</ha-button>` : "",
+      has("set_tracking")
+        ? `<div class="switch-row"><span>Tracking</span><ha-switch id="tracking-switch"></ha-switch></div>`
+        : "",
+    ]
+      .filter(Boolean)
+      .join("");
+
+    const powerRow = [
+      has("allow_power_actions")
+        ? `<div class="switch-row"><span>Allow power actions</span><ha-switch id="allow-power-switch"></ha-switch></div>`
+        : "",
+      has("startup_sequence") ? `<ha-button id="startup-btn">Startup sequence</ha-button>` : "",
+      has("shutdown") ? `<ha-button id="shutdown-btn">Shutdown</ha-button>` : "",
+    ]
+      .filter(Boolean)
+      .join("");
+
+    const dewRow = has("set_dew_heater")
+      ? `<div class="switch-row"><span>Dew heater</span><ha-switch id="dew-heater-switch"></ha-switch></div>`
+      : "";
+
     return `
       <div class="section">
         ${imgSrc ? `<img class="preview" src="${imgSrc}" alt="Live preview" />` : ""}
       </div>
 
-      <div class="section">
+      ${
+        mountRow || powerRow || dewRow
+          ? `<div class="section">
         <h3>Mount</h3>
-        <div class="row buttons">
-          <ha-button id="park-btn">Park</ha-button>
-          <ha-button id="unpark-btn">Unpark</ha-button>
-          <div class="switch-row">
-            <span>Tracking</span>
-            <ha-switch id="tracking-switch"></ha-switch>
-          </div>
-        </div>
-      </div>
+        ${mountRow ? `<div class="row buttons">${mountRow}</div>` : ""}
+        ${powerRow ? `<div class="row buttons">${powerRow}</div>` : ""}
+        ${dewRow ? `<div class="row buttons">${dewRow}</div>` : ""}
+      </div>`
+          : ""
+      }
 
       <div class="section">
         <h3>Goto</h3>
@@ -251,21 +329,21 @@ class ObservingTimeReservationCard extends HTMLElement {
         </div>
         <div class="row buttons">
           <ha-button id="goto-btn" appearance="accent">Goto</ha-button>
-          <ha-button id="stop-goto-btn">Stop</ha-button>
+          ${has("stop_goto") ? `<ha-button id="stop-goto-btn">Stop</ha-button>` : ""}
         </div>
       </div>
 
       <div class="section">
         <h3>Imaging</h3>
         <div class="row">
-          <ha-input id="exposure-input" label="Exposure (s)" type="number"></ha-input>
+          <ha-input id="exposure-input" label="Exposure${exposureUnit ? ` (${exposureUnit})` : ""}" type="number"></ha-input>
           <ha-input id="filter-input" label="Filter"></ha-input>
           <ha-input id="focus-input" label="Focus"></ha-input>
           <ha-input id="temp-input" label="CCD temp (C)" type="number"></ha-input>
         </div>
         <div class="row buttons">
           <ha-button id="start-capture-btn" appearance="accent">Start capture</ha-button>
-          <ha-button id="stop-capture-btn">Stop capture</ha-button>
+          ${has("stop_capture") ? `<ha-button id="stop-capture-btn">Stop capture</ha-button>` : ""}
         </div>
         <div class="row buttons">
           <div class="switch-row">
@@ -333,14 +411,27 @@ class ObservingTimeReservationCard extends HTMLElement {
       this._call("reserve", { start: new Date(start).toISOString(), end: new Date(end).toISOString() });
     });
 
-    on("park-btn", "click", () => this._sendCommand("park"));
-    on("unpark-btn", "click", () => this._sendCommand("unpark"));
-    on("tracking-switch", "change", (e) => this._sendCommand("set_tracking", e.target.checked));
+    on("park-btn", "click", () => this._sendCommand("park", this._resolveCapabilityValue("park", "park")));
+    on("unpark-btn", "click", () =>
+      this._sendCommand("unpark", this._resolveCapabilityValue("unpark", "unpark"))
+    );
+    on("tracking-switch", "change", (e) => {
+      const hint = e.target.checked ? "on" : "off";
+      this._sendCommand("set_tracking", this._resolveCapabilityValue("set_tracking", hint, e.target.checked));
+    });
+    on("allow-power-switch", "change", (e) => this._sendCommand("allow_power_actions", e.target.checked));
+    on("startup-btn", "click", () => this._sendCommand("startup_sequence"));
+    on("shutdown-btn", "click", () => this._sendCommand("shutdown"));
+    on("dew-heater-switch", "change", (e) => this._sendCommand("set_dew_heater", e.target.checked));
 
     on("goto-btn", "click", async () => {
       await this._sendCommand("set_goto_ra", val("ra-input"));
       await this._sendCommand("set_goto_dec", val("dec-input"));
-      await this._sendCommand("goto");
+      // Some backends (e.g. ha-indi-client) have no separate "execute"
+      // entity - setting the RA/Dec elements above already IS the goto.
+      if (this._hasCapability("goto")) {
+        await this._sendCommand("goto");
+      }
     });
     on("stop-goto-btn", "click", () => this._sendCommand("stop_goto"));
 
@@ -353,7 +444,9 @@ class ObservingTimeReservationCard extends HTMLElement {
       if (filter) await this._sendCommand("set_filter", filter);
       if (focus) await this._sendCommand("set_focus", Number(focus));
       if (temp) await this._sendCommand("set_ccd_temperature", Number(temp));
-      await this._sendCommand("start_capture");
+      if (this._hasCapability("start_capture")) {
+        await this._sendCommand("start_capture");
+      }
     });
     on("stop-capture-btn", "click", () => this._sendCommand("stop_capture"));
     on("recording-switch", "change", (e) => this._call("set_recording", { enabled: e.target.checked }));

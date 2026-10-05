@@ -158,6 +158,41 @@ class ObservingTimeReservationPanel extends HTMLElement {
     return (st && st.attributes && st.attributes.windows) || [];
   }
 
+  // -- capability helpers ------------------------------------------------
+  // The backend only ever tells us WHICH entity a capability is mapped to
+  // (capability_map); everything backend-specific (an entity's current
+  // .attributes.options, its unit_of_measurement, whether it exists at
+  // all) is read from that entity's live state here, at the moment of the
+  // click - never hardcoded, since it differs by backend (e.g.
+  // ha-indi-client's Park is a `select` whose two option labels come from
+  // the INDI driver; ha-seestar's is a `button` with no options at all,
+  // and has no "Unpark" to speak of).
+
+  _capabilityEntity(telescope, cap) {
+    return (telescope.capability_map && telescope.capability_map[cap]) || null;
+  }
+
+  _hasCapability(telescope, cap) {
+    return !!this._capabilityEntity(telescope, cap);
+  }
+
+  _resolveCapabilityValue(telescope, cap, hint, fallback) {
+    const entityId = this._capabilityEntity(telescope, cap);
+    if (!entityId) return fallback;
+    if (entityId.split(".")[0] !== "select") return fallback;
+    const state = this._hass.states[entityId];
+    const options = (state && state.attributes && state.attributes.options) || [];
+    const lower = hint.toLowerCase();
+    const match = options.find((o) => o.toLowerCase().includes(lower));
+    return match || fallback;
+  }
+
+  _unitFor(telescope, cap) {
+    const entityId = this._capabilityEntity(telescope, cap);
+    const state = entityId ? this._hass.states[entityId] : null;
+    return (state && state.attributes && state.attributes.unit_of_measurement) || "";
+  }
+
   // Every entity id across every telescope, used to decide whether a hass
   // update is relevant enough to re-render (and not blow away whatever the
   // viewer is mid-typing in an input field for an unrelated reason).
@@ -290,18 +325,44 @@ class ObservingTimeReservationPanel extends HTMLElement {
   }
 
   _renderControlPanel(telescope, holder) {
+    const has = (cap) => this._hasCapability(telescope, cap);
+    const exposureUnit = this._unitFor(telescope, "set_exposure");
+
+    const mountRow = [
+      has("park") ? `<ha-button id="park-btn">Park</ha-button>` : "",
+      has("unpark") ? `<ha-button id="unpark-btn">Unpark</ha-button>` : "",
+      has("set_tracking")
+        ? `<div class="switch-row"><span>Tracking</span><ha-switch id="tracking-switch"></ha-switch></div>`
+        : "",
+    ]
+      .filter(Boolean)
+      .join("");
+
+    const powerRow = [
+      has("allow_power_actions")
+        ? `<div class="switch-row"><span>Allow power actions</span><ha-switch id="allow-power-switch"></ha-switch></div>`
+        : "",
+      has("startup_sequence") ? `<ha-button id="startup-btn">Startup sequence</ha-button>` : "",
+      has("shutdown") ? `<ha-button id="shutdown-btn">Shutdown</ha-button>` : "",
+    ]
+      .filter(Boolean)
+      .join("");
+
+    const dewRow = has("set_dew_heater")
+      ? `<div class="switch-row"><span>Dew heater</span><ha-switch id="dew-heater-switch"></ha-switch></div>`
+      : "";
+
     return `
-      <div class="section">
+      ${
+        mountRow || powerRow || dewRow
+          ? `<div class="section">
         <h2><ha-icon icon="mdi:axis-arrow"></ha-icon> Mount</h2>
-        <div class="row buttons">
-          <ha-button id="park-btn">Park</ha-button>
-          <ha-button id="unpark-btn">Unpark</ha-button>
-          <div class="switch-row">
-            <span>Tracking</span>
-            <ha-switch id="tracking-switch"></ha-switch>
-          </div>
-        </div>
-      </div>
+        ${mountRow ? `<div class="row buttons">${mountRow}</div>` : ""}
+        ${powerRow ? `<div class="row buttons">${powerRow}</div>` : ""}
+        ${dewRow ? `<div class="row buttons">${dewRow}</div>` : ""}
+      </div>`
+          : ""
+      }
 
       <div class="section">
         <h2><ha-icon icon="mdi:crosshairs-gps"></ha-icon> Goto</h2>
@@ -311,21 +372,21 @@ class ObservingTimeReservationPanel extends HTMLElement {
         </div>
         <div class="row buttons">
           <ha-button id="goto-btn" appearance="accent">Goto</ha-button>
-          <ha-button id="stop-goto-btn">Stop</ha-button>
+          ${has("stop_goto") ? `<ha-button id="stop-goto-btn">Stop</ha-button>` : ""}
         </div>
       </div>
 
       <div class="section">
         <h2><ha-icon icon="mdi:camera-iris"></ha-icon> Imaging</h2>
         <div class="row">
-          <ha-input id="exposure-input" label="Exposure (s)" type="number"></ha-input>
+          <ha-input id="exposure-input" label="Exposure${exposureUnit ? ` (${exposureUnit})` : ""}" type="number"></ha-input>
           <ha-input id="filter-input" label="Filter"></ha-input>
           <ha-input id="focus-input" label="Focus"></ha-input>
           <ha-input id="temp-input" label="CCD temp (C)" type="number"></ha-input>
         </div>
         <div class="row buttons">
           <ha-button id="start-capture-btn" appearance="accent">Start capture</ha-button>
-          <ha-button id="stop-capture-btn">Stop capture</ha-button>
+          ${has("stop_capture") ? `<ha-button id="stop-capture-btn">Stop capture</ha-button>` : ""}
         </div>
         <div class="row buttons">
           <div class="switch-row">
@@ -443,14 +504,33 @@ class ObservingTimeReservationPanel extends HTMLElement {
       this._call("reserve", { start: new Date(start).toISOString(), end: new Date(end).toISOString() });
     });
 
-    on("park-btn", "click", () => this._sendCommand("park"));
-    on("unpark-btn", "click", () => this._sendCommand("unpark"));
-    on("tracking-switch", "change", (e) => this._sendCommand("set_tracking", e.target.checked));
+    on("park-btn", "click", () =>
+      this._sendCommand("park", this._resolveCapabilityValue(telescope, "park", "park"))
+    );
+    on("unpark-btn", "click", () =>
+      this._sendCommand("unpark", this._resolveCapabilityValue(telescope, "unpark", "unpark"))
+    );
+    on("tracking-switch", "change", (e) => {
+      const hint = e.target.checked ? "on" : "off";
+      this._sendCommand(
+        "set_tracking",
+        this._resolveCapabilityValue(telescope, "set_tracking", hint, e.target.checked)
+      );
+    });
+    on("allow-power-switch", "change", (e) => this._sendCommand("allow_power_actions", e.target.checked));
+    on("startup-btn", "click", () => this._sendCommand("startup_sequence"));
+    on("shutdown-btn", "click", () => this._sendCommand("shutdown"));
+    on("dew-heater-switch", "change", (e) => this._sendCommand("set_dew_heater", e.target.checked));
 
     on("goto-btn", "click", async () => {
       await this._sendCommand("set_goto_ra", val("ra-input"));
       await this._sendCommand("set_goto_dec", val("dec-input"));
-      await this._sendCommand("goto");
+      // Some backends (e.g. ha-indi-client) have no separate "execute"
+      // entity at all - setting the RA/Dec number elements above already
+      // IS the goto. Only call a dedicated execute step when one is mapped.
+      if (this._hasCapability(telescope, "goto")) {
+        await this._sendCommand("goto");
+      }
     });
     on("stop-goto-btn", "click", () => this._sendCommand("stop_goto"));
 
@@ -463,7 +543,11 @@ class ObservingTimeReservationPanel extends HTMLElement {
       if (filter) await this._sendCommand("set_filter", filter);
       if (focus) await this._sendCommand("set_focus", Number(focus));
       if (temp) await this._sendCommand("set_ccd_temperature", Number(temp));
-      await this._sendCommand("start_capture");
+      // As with goto: some backends start the exposure merely by writing
+      // the exposure value itself, with no separate trigger entity.
+      if (this._hasCapability(telescope, "start_capture")) {
+        await this._sendCommand("start_capture");
+      }
     });
     on("stop-capture-btn", "click", () => this._sendCommand("stop_capture"));
     on("recording-switch", "change", (e) => this._call("set_recording", { enabled: e.target.checked }));

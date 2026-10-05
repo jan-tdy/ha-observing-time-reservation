@@ -20,6 +20,7 @@ from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    CAP_CONTROLS_ENABLED,
     CONF_ADMIN_USER_IDS,
     CONF_CAPABILITY_MAP,
     CONF_CAPTURE_INTERVAL,
@@ -85,6 +86,7 @@ class TelescopeCoordinator:
         self._listeners: list[callback] = []
         self._unsub_timer = None
         self._last_capture: dict[str, datetime] = {}
+        self._armed_reservation_id: str | None = None
 
     @property
     def name(self) -> str:
@@ -293,6 +295,7 @@ class TelescopeCoordinator:
 
     async def _async_tick_async(self, now: datetime) -> None:
         holder = self.current_holder(now)
+        await self._async_sync_controls_enabled(holder)
         if holder is not None and holder.recording:
             last = self._last_capture.get(holder.id)
             if last is None or now - last >= self.capture_interval:
@@ -304,3 +307,25 @@ class TelescopeCoordinator:
         else:
             self._last_capture.clear()
         self._notify()
+
+    async def _async_sync_controls_enabled(self, holder: Reservation | None) -> None:
+        """Arm/disarm a backend's session-lifecycle gate (e.g. ha-seestar's
+        "Controls enabled" switch, without which it refuses every command)
+        to track whether a reservation is currently active - "arm before
+        commanding, disarm after", automatically, per the upstream backend's
+        own safety guidance. No-ops when the capability isn't mapped (e.g.
+        ha-indi-client, which has no such gate)."""
+        entity_id = self.capability_map.get(CAP_CONTROLS_ENABLED)
+        if not entity_id or not entity_id.startswith("switch."):
+            return
+        holder_id = holder.id if holder is not None else None
+        if holder_id == self._armed_reservation_id:
+            return
+        service = "turn_on" if holder_id is not None else "turn_off"
+        try:
+            await self.hass.services.async_call(
+                "switch", service, {"entity_id": entity_id}, blocking=True
+            )
+            self._armed_reservation_id = holder_id
+        except HomeAssistantError as err:
+            _LOGGER.warning("Could not %s controls-enabled gate for %s: %s", service, self.name, err)

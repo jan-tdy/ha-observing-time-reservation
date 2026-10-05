@@ -56,6 +56,15 @@ CAPABILITY_LABELS = {
     "set_filter": "Filter wheel",
     "set_focus": "Focuser",
     "set_ccd_temperature": "CCD temperature",
+    "controls_enabled": (
+        "Controls-enabled gate (auto-armed while a reservation is active, "
+        "e.g. ha-seestar's 'Controls enabled' switch - leave blank if your "
+        "backend has no such gate, like ha-indi-client)"
+    ),
+    "allow_power_actions": "Allow power actions (manual switch, gates park/startup/shutdown)",
+    "startup_sequence": "Startup sequence",
+    "shutdown": "Shutdown",
+    "set_dew_heater": "Dew heater",
     "live_camera_entity": "Live view camera",
     "preview_camera_entity": "Preview / capture camera (used for saved frames)",
     "status_sensor_entity": "Status / last message sensor",

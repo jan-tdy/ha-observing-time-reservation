@@ -86,17 +86,32 @@ Copy `custom_components/observing_time_reservation` into your Home Assistant
      auto-save interval while recording, admin HA user IDs, and the same
      device list from step 3 (editable here too);
    - capability mapping: for each abstract action (goto RA/Dec, park, tracking,
-     start/stop capture, exposure, filter, focuser, CCD temperature, live/preview
-     camera, status sensor) pick the existing entity it should drive. This uses
-     HA's own entity selector, so it's the same dropdown you already know from
-     every other integration - there is nothing to type or get wrong - and,
-     when step 3 named at least one device, the dropdown only lists entities
-     from those devices instead of every entity in the house.
+     start/stop capture, exposure, filter, focuser, CCD temperature, the
+     controls-enabled gate, allow-power-actions, startup sequence, shutdown,
+     dew heater, live/preview camera, status sensor) pick the existing entity
+     it should drive. This uses HA's own entity selector, so it's the same
+     dropdown you already know from every other integration - there is
+     nothing to type or get wrong - and, when step 3 named at least one
+     device, the dropdown only lists entities from those devices instead of
+     every entity in the house. Leave a capability blank if your backend has
+     no matching entity (e.g. `ha-seestar` has no "Unpark"); the UI simply
+     hides that control instead of showing a dead button.
 
 The service -> entity mapping is inferred automatically from the entity's
 domain (`button.press`, `number.set_value`, `select.select_option`,
 `text.set_value`, `switch.turn_on`/`turn_off`), so the admin never has to name a
-service by hand.
+service by hand. For a `select`-domain target (e.g. `ha-indi-client`'s Park,
+which is one dropdown with "Park"/"Unpark" options, not two buttons) the UI
+reads the entity's *actual* current `options` at click time and matches the
+one that looks right, rather than guessing driver-specific label text.
+
+If you map `controls_enabled` (`ha-seestar`'s "Controls enabled" switch,
+without which it silently refuses every command), the integration arms it
+automatically the moment a reservation becomes active and disarms it the
+moment the session ends - you never have to remember to flip it yourself.
+`allow_power_actions` is the opposite: a manual switch in the control panel,
+left to the client to arm deliberately right before Park/Startup/Shutdown,
+per `ha-seestar`'s own safety guidance.
 
 ## The "Observing Time" panel (primary interface)
 
@@ -170,10 +185,19 @@ with proper selectors.
   what's needed to invoice manually; no payment flow exists yet.
 - **One capability = one entity.** This is enough for every INDI/Seestar control
   surfaced today (a goto needs two text/number entities for RA/Dec plus one
-  button to execute - modelled as three separate capabilities), but a property
-  that genuinely needs several simultaneous values in one call isn't supported;
-  use `ha-indi-client`'s `indi_client.set_property` service directly for that
+  button to execute - modelled as three separate capabilities, and the
+  execute step is simply skipped when a backend has none, since
+  `ha-indi-client` itself has no separate "goto" trigger - writing the RA/Dec
+  number elements directly *is* the goto), but a property that genuinely
+  needs several simultaneous values in one call isn't supported; use
+  `ha-indi-client`'s `indi_client.set_property` service directly for that
   rare case.
+- **Exposure units differ by backend and aren't converted.** `ha-seestar`'s
+  stacking exposure is milliseconds; `ha-indi-client`'s `CCD_EXPOSURE` is
+  typically seconds. The control panel shows whatever
+  `unit_of_measurement` the mapped number entity itself reports, so the
+  field is always labelled correctly - but it sends the raw number through
+  unchanged, so read the label.
 - **Frame storage is local disk only.** `image_base_path` currently has to be a
   path the HA process can write to directly; moving it to a mounted USB drive
   once storage grows is just a matter of changing that option (no code change).

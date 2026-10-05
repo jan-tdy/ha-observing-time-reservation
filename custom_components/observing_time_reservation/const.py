@@ -46,6 +46,19 @@ CAP_SET_EXPOSURE = "set_exposure"
 CAP_SET_FILTER = "set_filter"
 CAP_SET_FOCUS = "set_focus"
 CAP_SET_CCD_TEMPERATURE = "set_ccd_temperature"
+# Session-lifecycle switch some backends require before ANY other command
+# works at all (e.g. ha-seestar's "Controls enabled" - every command is
+# silently refused while it's off). The coordinator arms it automatically
+# when a reservation becomes active and disarms it when the session ends;
+# it is not a manual control in the UI.
+CAP_CONTROLS_ENABLED = "controls_enabled"
+# A second, manually-toggled gate some backends require specifically for
+# destructive power actions (park/startup/shutdown) - left to the client to
+# arm deliberately, per the upstream backend's own safety guidance.
+CAP_ALLOW_POWER_ACTIONS = "allow_power_actions"
+CAP_STARTUP_SEQUENCE = "startup_sequence"
+CAP_SHUTDOWN = "shutdown"
+CAP_SET_DEW_HEATER = "set_dew_heater"
 
 # capabilities that are entity references rather than action targets
 REF_LIVE_CAMERA = "live_camera_entity"
@@ -66,6 +79,11 @@ ACTION_CAPABILITIES = [
     CAP_SET_FILTER,
     CAP_SET_FOCUS,
     CAP_SET_CCD_TEMPERATURE,
+    CAP_CONTROLS_ENABLED,
+    CAP_ALLOW_POWER_ACTIONS,
+    CAP_STARTUP_SEQUENCE,
+    CAP_SHUTDOWN,
+    CAP_SET_DEW_HEATER,
 ]
 
 REFERENCE_CAPABILITIES = [

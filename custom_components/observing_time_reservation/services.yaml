@@ -82,6 +82,10 @@ send_command:
             - set_filter
             - set_focus
             - set_ccd_temperature
+            - allow_power_actions
+            - startup_sequence
+            - shutdown
+            - set_dew_heater
     value:
       name: Value
       required: false
