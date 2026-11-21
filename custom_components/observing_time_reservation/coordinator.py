@@ -409,8 +409,10 @@ class TelescopeCoordinator:
         sequence = self._sequence
         if sequence is None:
             return
+        capture_started = False
         try:
             while sequence.state == STATE_RUNNING:
+                capture_started = False
                 if not sequence.skip_completed_steps():
                     sequence.state = STATE_DONE
                     break
@@ -432,6 +434,7 @@ class TelescopeCoordinator:
                     await self._async_dispatch_capability(CAP_SET_CCD_TEMPERATURE, step.ccd_temperature)
                 await self._async_dispatch_capability(CAP_SET_EXPOSURE, step.exposure)
                 await self._async_dispatch_capability(CAP_START_CAPTURE)
+                capture_started = True
 
                 wait_seconds = self._exposure_wait_seconds(step.exposure) + SEQUENCE_READOUT_BUFFER.total_seconds()
                 await asyncio.sleep(wait_seconds)
@@ -439,9 +442,17 @@ class TelescopeCoordinator:
                 # The exposure already happened even if paused/cancelled
                 # partway through the wait above, so it still counts.
                 sequence.record_sub_done()
+                capture_started = False
                 await self._async_save_sequence()
                 self._notify()
         except asyncio.CancelledError:
+            if capture_started:
+                # The exposure was already launched before its wait was
+                # cancelled, so persist it as completed instead of losing
+                # progress when the task exits early.
+                sequence.record_sub_done()
+                await self._async_save_sequence()
+                self._notify()
             raise
         except HomeAssistantError as err:
             _LOGGER.warning("Sequence for %s stopped: %s", self.name, err)
