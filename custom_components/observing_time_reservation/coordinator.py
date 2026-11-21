@@ -107,6 +107,9 @@ class TelescopeCoordinator:
         self._unsub_timer = None
         self._last_capture: dict[str, datetime] = {}
         self._armed_reservation_id: str | None = None
+        self._controls_gate_reconciled = False
+        self._unloading = False
+        self._tick_tasks: set[asyncio.Task] = set()
         self._sequence: Sequence | None = None
         self._sequence_reservation_id: str | None = None
         self._sequence_task: asyncio.Task | None = None
@@ -142,12 +145,19 @@ class TelescopeCoordinator:
         )
 
     async def async_unload(self) -> None:
+        self._unloading = True
         if self._unsub_timer:
             self._unsub_timer()
             self._unsub_timer = None
+        pending_ticks = tuple(self._tick_tasks)
+        for task in pending_ticks:
+            task.cancel()
+        if pending_ticks:
+            await asyncio.gather(*pending_ticks, return_exceptions=True)
         if self._sequence_task is not None:
             self._sequence_task.cancel()
             self._sequence_task = None
+        await self._async_sync_controls_enabled(None, force=True)
 
     def async_add_listener(self, update_callback: callback) -> callback:
         self._listeners.append(update_callback)
@@ -481,9 +491,15 @@ class TelescopeCoordinator:
 
     @callback
     def _async_tick(self, now: datetime) -> None:
-        self.hass.async_create_task(self._async_tick_async(now))
+        if self._unloading:
+            return
+        task = self.hass.async_create_task(self._async_tick_async(now))
+        self._tick_tasks.add(task)
+        task.add_done_callback(self._tick_tasks.discard)
 
     async def _async_tick_async(self, now: datetime) -> None:
+        if self._unloading:
+            return
         holder = self.current_holder(now)
         await self._async_sync_controls_enabled(holder)
         self._async_check_sequence_still_valid(holder)
@@ -499,7 +515,9 @@ class TelescopeCoordinator:
             self._last_capture.clear()
         self._notify()
 
-    async def _async_sync_controls_enabled(self, holder: Reservation | None) -> None:
+    async def _async_sync_controls_enabled(
+        self, holder: Reservation | None, *, force: bool = False
+    ) -> None:
         """Arm/disarm a backend's session-lifecycle gate (e.g. ha-seestar's
         "Controls enabled" switch, without which it refuses every command)
         to track whether a reservation is currently active - "arm before
@@ -510,7 +528,7 @@ class TelescopeCoordinator:
         if not entity_id or not entity_id.startswith("switch."):
             return
         holder_id = holder.id if holder is not None else None
-        if holder_id == self._armed_reservation_id:
+        if holder_id == self._armed_reservation_id and self._controls_gate_reconciled and not force:
             return
         service = "turn_on" if holder_id is not None else "turn_off"
         try:
@@ -518,5 +536,6 @@ class TelescopeCoordinator:
                 "switch", service, {"entity_id": entity_id}, blocking=True
             )
             self._armed_reservation_id = holder_id
+            self._controls_gate_reconciled = True
         except HomeAssistantError as err:
             _LOGGER.warning("Could not %s controls-enabled gate for %s: %s", service, self.name, err)
