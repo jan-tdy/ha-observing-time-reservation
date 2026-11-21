@@ -214,7 +214,20 @@ async def async_setup(hass: HomeAssistant, _config: dict) -> bool:
         SERVICE_SET_AVAILABILITY,
         _handle_set_availability,
         schema=vol.Schema(
-            {vol.Required(ATTR_CONFIG_ENTRY_ID): str, vol.Required(ATTR_WINDOWS): list}
+            {
+                vol.Required(ATTR_CONFIG_ENTRY_ID): str,
+                vol.Required(ATTR_WINDOWS): vol.All(
+                    list,
+                    [
+                        vol.Schema(
+                            {
+                                vol.Required(ATTR_START): cv.datetime,
+                                vol.Required(ATTR_END): cv.datetime,
+                            }
+                        )
+                    ],
+                ),
+            }
         ),
     )
     hass.services.async_register(
