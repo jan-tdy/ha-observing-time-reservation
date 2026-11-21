@@ -250,10 +250,23 @@ class TelescopeCoordinator:
     async def async_set_availability(self, *, user_id: str | None, windows: list[dict]) -> None:
         if not await self._is_admin(user_id):
             raise HomeAssistantError("only an admin can set the availability window")
-        parsed = [Window(start=dt_util.parse_datetime(w["start"]), end=dt_util.parse_datetime(w["end"])) for w in windows]
-        for window in parsed:
-            if window.start is None or window.end is None or window.end <= window.start:
-                raise HomeAssistantError(f"invalid window: {window}")
+        parsed: list[Window] = []
+        try:
+            for item in windows:
+                start = item["start"]
+                end = item["end"]
+                if isinstance(start, str):
+                    start = dt_util.parse_datetime(start)
+                if isinstance(end, str):
+                    end = dt_util.parse_datetime(end)
+                if not isinstance(start, datetime) or not isinstance(end, datetime):
+                    raise ValueError("start and end must be valid datetimes")
+                window = Window(start=dt_util.as_utc(start), end=dt_util.as_utc(end))
+                if window.end <= window.start:
+                    raise ValueError("window end must be after window start")
+                parsed.append(window)
+        except (KeyError, TypeError, ValueError) as err:
+            raise HomeAssistantError(f"invalid availability window: {err}") from err
         self.store.windows = parsed
         await self.store.async_save()
         self._notify()
