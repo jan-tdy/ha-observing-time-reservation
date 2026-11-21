@@ -157,7 +157,7 @@ class TelescopeCoordinator:
         if self._sequence_task is not None:
             self._sequence_task.cancel()
             self._sequence_task = None
-        await self._async_sync_controls_enabled(None)
+        await self._async_sync_controls_enabled(None, force=True)
 
     def async_add_listener(self, update_callback: callback) -> callback:
         self._listeners.append(update_callback)
@@ -515,7 +515,9 @@ class TelescopeCoordinator:
             self._last_capture.clear()
         self._notify()
 
-    async def _async_sync_controls_enabled(self, holder: Reservation | None) -> None:
+    async def _async_sync_controls_enabled(
+        self, holder: Reservation | None, *, force: bool = False
+    ) -> None:
         """Arm/disarm a backend's session-lifecycle gate (e.g. ha-seestar's
         "Controls enabled" switch, without which it refuses every command)
         to track whether a reservation is currently active - "arm before
@@ -526,7 +528,7 @@ class TelescopeCoordinator:
         if not entity_id or not entity_id.startswith("switch."):
             return
         holder_id = holder.id if holder is not None else None
-        if holder_id == self._armed_reservation_id and self._controls_gate_reconciled:
+        if holder_id == self._armed_reservation_id and self._controls_gate_reconciled and not force:
             return
         service = "turn_on" if holder_id is not None else "turn_off"
         try:
