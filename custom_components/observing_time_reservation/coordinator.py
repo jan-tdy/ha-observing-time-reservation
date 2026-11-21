@@ -390,14 +390,20 @@ class TelescopeCoordinator:
         self._sequence.state = STATE_CANCELLED
         await self._async_save_sequence()
         self._notify()
+        if self._sequence_task is not None and not self._sequence_task.done():
+            self._sequence_task.cancel()
 
-    def _async_check_sequence_still_valid(self, holder: Reservation | None) -> None:
+    async def _async_check_sequence_still_valid(self, holder: Reservation | None) -> None:
         """A reservation ending mid-sequence cancels it - checked every 15s
         tick so it doesn't have to wait for the current sub's sleep to end."""
         if self._sequence is None or self._sequence.state not in (STATE_RUNNING, STATE_PAUSED):
             return
         if holder is None or holder.id != self._sequence_reservation_id:
             self._sequence.state = STATE_CANCELLED
+            if self._sequence_task is not None and not self._sequence_task.done():
+                self._sequence_task.cancel()
+            await self._async_save_sequence()
+            self._notify()
 
     async def _async_run_sequence(self, reservation_id: str) -> None:
         sequence = self._sequence
@@ -486,7 +492,7 @@ class TelescopeCoordinator:
     async def _async_tick_async(self, now: datetime) -> None:
         holder = self.current_holder(now)
         await self._async_sync_controls_enabled(holder)
-        self._async_check_sequence_still_valid(holder)
+        await self._async_check_sequence_still_valid(holder)
         if holder is not None and holder.recording:
             last = self._last_capture.get(holder.id)
             if last is None or now - last >= self.capture_interval:
