@@ -390,9 +390,9 @@ class TelescopeCoordinator:
         self._sequence.state = STATE_CANCELLED
         await self._async_save_sequence()
         self._notify()
-        if self._sequence_task is not None and not self._sequence_task.done():
-            self._sequence_task.cancel()
-
+        # Let an in-flight command or exposure wait drain before another
+        # sequence can start; the task exits when it observes CANCELLED.
+        
     async def _async_check_sequence_still_valid(self, holder: Reservation | None) -> None:
         """A reservation ending mid-sequence cancels it - checked every 15s
         tick so it doesn't have to wait for the current sub's sleep to end."""
@@ -400,8 +400,8 @@ class TelescopeCoordinator:
             return
         if holder is None or holder.id != self._sequence_reservation_id:
             self._sequence.state = STATE_CANCELLED
-            if self._sequence_task is not None and not self._sequence_task.done():
-                self._sequence_task.cancel()
+            # Keep the task alive until any command or exposure already sent
+            # has drained. Its loop exits because the state is now CANCELLED.
             await self._async_save_sequence()
             self._notify()
 
