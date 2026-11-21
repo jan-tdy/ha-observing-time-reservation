@@ -107,6 +107,7 @@ class TelescopeCoordinator:
         self._unsub_timer = None
         self._last_capture: dict[str, datetime] = {}
         self._armed_reservation_id: str | None = None
+        self._controls_gate_reconciled = False
         self._sequence: Sequence | None = None
         self._sequence_reservation_id: str | None = None
         self._sequence_task: asyncio.Task | None = None
@@ -148,6 +149,7 @@ class TelescopeCoordinator:
         if self._sequence_task is not None:
             self._sequence_task.cancel()
             self._sequence_task = None
+        await self._async_sync_controls_enabled(None)
 
     def async_add_listener(self, update_callback: callback) -> callback:
         self._listeners.append(update_callback)
@@ -510,7 +512,7 @@ class TelescopeCoordinator:
         if not entity_id or not entity_id.startswith("switch."):
             return
         holder_id = holder.id if holder is not None else None
-        if holder_id == self._armed_reservation_id:
+        if holder_id == self._armed_reservation_id and self._controls_gate_reconciled:
             return
         service = "turn_on" if holder_id is not None else "turn_off"
         try:
@@ -518,5 +520,6 @@ class TelescopeCoordinator:
                 "switch", service, {"entity_id": entity_id}, blocking=True
             )
             self._armed_reservation_id = holder_id
+            self._controls_gate_reconciled = True
         except HomeAssistantError as err:
             _LOGGER.warning("Could not %s controls-enabled gate for %s: %s", service, self.name, err)
