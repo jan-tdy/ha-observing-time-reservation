@@ -108,6 +108,8 @@ class TelescopeCoordinator:
         self._last_capture: dict[str, datetime] = {}
         self._armed_reservation_id: str | None = None
         self._controls_gate_reconciled = False
+        self._unloading = False
+        self._tick_tasks: set[asyncio.Task] = set()
         self._sequence: Sequence | None = None
         self._sequence_reservation_id: str | None = None
         self._sequence_task: asyncio.Task | None = None
@@ -143,9 +145,15 @@ class TelescopeCoordinator:
         )
 
     async def async_unload(self) -> None:
+        self._unloading = True
         if self._unsub_timer:
             self._unsub_timer()
             self._unsub_timer = None
+        pending_ticks = tuple(self._tick_tasks)
+        for task in pending_ticks:
+            task.cancel()
+        if pending_ticks:
+            await asyncio.gather(*pending_ticks, return_exceptions=True)
         if self._sequence_task is not None:
             self._sequence_task.cancel()
             self._sequence_task = None
@@ -483,9 +491,15 @@ class TelescopeCoordinator:
 
     @callback
     def _async_tick(self, now: datetime) -> None:
-        self.hass.async_create_task(self._async_tick_async(now))
+        if self._unloading:
+            return
+        task = self.hass.async_create_task(self._async_tick_async(now))
+        self._tick_tasks.add(task)
+        task.add_done_callback(self._tick_tasks.discard)
 
     async def _async_tick_async(self, now: datetime) -> None:
+        if self._unloading:
+            return
         holder = self.current_holder(now)
         await self._async_sync_controls_enabled(holder)
         self._async_check_sequence_still_valid(holder)
