@@ -440,6 +440,9 @@ class TelescopeCoordinator:
         except HomeAssistantError as err:
             _LOGGER.warning("Sequence for %s stopped: %s", self.name, err)
             sequence.state = STATE_CANCELLED
+        except Exception:
+            _LOGGER.exception("Sequence for %s failed unexpectedly", self.name)
+            sequence.state = STATE_CANCELLED
         finally:
             await self._async_save_sequence()
             self._notify()
