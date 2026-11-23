@@ -229,6 +229,7 @@ class TelescopeCoordinator:
             max_duration=self.max_duration,
             slot_step=self.slot_step,
             now=now,
+            local_start=dt_util.as_local(start),
         )
         reservation = Reservation(client_user_id=user_id, client_name=user_name, start=start, end=end)
         self.store.reservations.append(reservation)

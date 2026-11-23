@@ -107,6 +107,7 @@ def validate_new_reservation(
     max_duration: timedelta,
     slot_step: timedelta,
     now: datetime,
+    local_start: datetime | None = None,
 ) -> None:
     """Raise ReservationError if the requested slot cannot be booked."""
     if end <= start:
@@ -125,8 +126,11 @@ def validate_new_reservation(
         )
 
     if slot_step.total_seconds() > 0:
-        offset = (start.hour * 60 + start.minute) % (slot_step.total_seconds() / 60)
-        if offset != 0:
+        if start.second or start.microsecond:
+            raise ReservationError("start time must align to whole-minute slots")
+        local = local_start or start
+        seconds_since_midnight = (local.hour * 60 + local.minute) * 60
+        if seconds_since_midnight % slot_step.total_seconds() != 0:
             raise ReservationError(
                 f"start time must align to {int(slot_step.total_seconds() // 60)}-minute slots"
             )
