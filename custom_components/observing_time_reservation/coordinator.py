@@ -391,21 +391,29 @@ class TelescopeCoordinator:
         self._sequence.state = STATE_CANCELLED
         await self._async_save_sequence()
         self._notify()
-
-    def _async_check_sequence_still_valid(self, holder: Reservation | None) -> None:
+        # Let an in-flight command or exposure wait drain before another
+        # sequence can start; the task exits when it observes CANCELLED.
+        
+    async def _async_check_sequence_still_valid(self, holder: Reservation | None) -> None:
         """A reservation ending mid-sequence cancels it - checked every 15s
         tick so it doesn't have to wait for the current sub's sleep to end."""
         if self._sequence is None or self._sequence.state not in (STATE_RUNNING, STATE_PAUSED):
             return
         if holder is None or holder.id != self._sequence_reservation_id:
             self._sequence.state = STATE_CANCELLED
+            # Keep the task alive until any command or exposure already sent
+            # has drained. Its loop exits because the state is now CANCELLED.
+            await self._async_save_sequence()
+            self._notify()
 
     async def _async_run_sequence(self, reservation_id: str) -> None:
         sequence = self._sequence
         if sequence is None:
             return
+        capture_started = False
         try:
             while sequence.state == STATE_RUNNING:
+                capture_started = False
                 if not sequence.skip_completed_steps():
                     sequence.state = STATE_DONE
                     break
@@ -427,6 +435,7 @@ class TelescopeCoordinator:
                     await self._async_dispatch_capability(CAP_SET_CCD_TEMPERATURE, step.ccd_temperature)
                 await self._async_dispatch_capability(CAP_SET_EXPOSURE, step.exposure)
                 await self._async_dispatch_capability(CAP_START_CAPTURE)
+                capture_started = True
 
                 wait_seconds = self._exposure_wait_seconds(step.exposure) + SEQUENCE_READOUT_BUFFER.total_seconds()
                 await asyncio.sleep(wait_seconds)
@@ -434,9 +443,17 @@ class TelescopeCoordinator:
                 # The exposure already happened even if paused/cancelled
                 # partway through the wait above, so it still counts.
                 sequence.record_sub_done()
+                capture_started = False
                 await self._async_save_sequence()
                 self._notify()
         except asyncio.CancelledError:
+            if capture_started:
+                # The exposure was already launched before its wait was
+                # cancelled, so persist it as completed instead of losing
+                # progress when the task exits early.
+                sequence.record_sub_done()
+                await self._async_save_sequence()
+                self._notify()
             raise
         except HomeAssistantError as err:
             _LOGGER.warning("Sequence for %s stopped: %s", self.name, err)
@@ -487,7 +504,7 @@ class TelescopeCoordinator:
     async def _async_tick_async(self, now: datetime) -> None:
         holder = self.current_holder(now)
         await self._async_sync_controls_enabled(holder)
-        self._async_check_sequence_still_valid(holder)
+        await self._async_check_sequence_still_valid(holder)
         if holder is not None and holder.recording:
             last = self._last_capture.get(holder.id)
             if last is None or now - last >= self.capture_interval:
