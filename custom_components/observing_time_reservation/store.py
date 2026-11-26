@@ -1,11 +1,35 @@
 """Persistence for one telescope's availability windows and reservations."""
 from __future__ import annotations
 
+import logging
+
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 
 from .const import DOMAIN, STORAGE_VERSION
 from .reservation import Reservation, Window
+
+_LOGGER = logging.getLogger(__name__)
+
+
+def _load_records(values: object, record_type: type, label: str) -> list:
+    if not isinstance(values, list):
+        _LOGGER.warning("Ignoring invalid stored %s collection", label)
+        return []
+
+    records = []
+    for index, value in enumerate(values):
+        try:
+            if not isinstance(value, dict):
+                raise TypeError("record must be an object")
+            record = record_type.from_dict(value)
+            if record.end <= record.start:
+                raise ValueError("record end must be after its start")
+        except (KeyError, TypeError, ValueError) as err:
+            _LOGGER.warning("Skipping invalid stored %s record at index %d: %s", label, index, err)
+            continue
+        records.append(record)
+    return records
 
 
 class ReservationStore:
@@ -25,8 +49,11 @@ class ReservationStore:
         data = await self._store.async_load()
         if not data:
             return
-        self.windows = [Window.from_dict(w) for w in data.get("windows", [])]
-        self.reservations = [Reservation.from_dict(r) for r in data.get("reservations", [])]
+        if not isinstance(data, dict):
+            _LOGGER.warning("Ignoring invalid reservation storage data")
+            return
+        self.windows = _load_records(data.get("windows", []), Window, "window")
+        self.reservations = _load_records(data.get("reservations", []), Reservation, "reservation")
         self.sequence_data = data.get("sequence_data")
 
     async def async_save(self) -> None:
