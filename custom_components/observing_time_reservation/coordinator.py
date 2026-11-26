@@ -105,6 +105,7 @@ class TelescopeCoordinator:
         self.store = ReservationStore(hass, entry.entry_id)
         self._listeners: list[callback] = []
         self._unsub_timer = None
+        self._tick_task: asyncio.Task | None = None
         self._last_capture: dict[str, datetime] = {}
         self._armed_reservation_id: str | None = None
         self._sequence: Sequence | None = None
@@ -145,6 +146,9 @@ class TelescopeCoordinator:
         if self._unsub_timer:
             self._unsub_timer()
             self._unsub_timer = None
+        if self._tick_task is not None:
+            self._tick_task.cancel()
+            self._tick_task = None
         if self._sequence_task is not None:
             self._sequence_task.cancel()
             self._sequence_task = None
@@ -512,7 +516,15 @@ class TelescopeCoordinator:
 
     @callback
     def _async_tick(self, now: datetime) -> None:
-        self.hass.async_create_task(self._async_tick_async(now))
+        if self._tick_task is not None and not self._tick_task.done():
+            return
+        self._tick_task = self.hass.async_create_task(self._async_tick_guarded(now))
+
+    async def _async_tick_guarded(self, now: datetime) -> None:
+        try:
+            await self._async_tick_async(now)
+        finally:
+            self._tick_task = None
 
     async def _async_tick_async(self, now: datetime) -> None:
         holder = self.current_holder(now)
